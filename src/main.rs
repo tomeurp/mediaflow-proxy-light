@@ -502,6 +502,8 @@ async fn main() -> std::io::Result<()> {
         app
             // Default: try to serve a static asset; fall back to 404 JSON
             .default_service(web::route().to(|req: actix_web::HttpRequest| async move {
+                // Variable only used when web-ui feature is enabled.
+                #[allow(unused_variables)]
                 let path = req.path().trim_start_matches('/');
 
                 #[cfg(feature = "web-ui")]

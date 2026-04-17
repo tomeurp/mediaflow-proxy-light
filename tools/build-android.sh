@@ -94,6 +94,9 @@ for entry in "${TARGETS[@]}"; do
     export "CARGO_TARGET_${TARGET_UPPER}_LINKER=$NDK_BIN/$LINKER"
     export "CC_${RUST_TARGET}=$NDK_BIN/$LINKER"
     export "AR_${RUST_TARGET}=$NDK_BIN/llvm-ar"
+    # NDK r23+ dropped legacy `<target>-ranlib` shims; vendored-openssl's
+    # Makefile hard-codes that name.  Point it at `llvm-ranlib` instead.
+    export "RANLIB_${RUST_TARGET}=$NDK_BIN/llvm-ranlib"
 
     cargo build \
         --release \

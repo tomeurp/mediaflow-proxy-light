@@ -220,12 +220,10 @@ impl AcestreamSessionManager {
         // a remote host we must rewrite those references so that subsequent fetches
         // (manifest, stat, command) go to the right machine instead of the
         // proxy's own localhost.
-        let rewrite = |s: String| rewrite_engine_host(s, engine_host, engine_port);
-
         Ok((
-            rewrite(playback_url),
-            engine.command_url.map(&rewrite),
-            engine.stat_url.map(&rewrite),
+            rewrite_engine_host(playback_url, engine_host, engine_port),
+            engine.command_url.map(|s| rewrite_engine_host(s, engine_host, engine_port)),
+            engine.stat_url.map(|s| rewrite_engine_host(s, engine_host, engine_port)),
         ))
     }
 

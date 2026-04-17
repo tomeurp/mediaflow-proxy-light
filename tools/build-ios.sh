@@ -19,9 +19,17 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 
-FEATURES="ffi,hls,mpd,drm,xtream,extractors,web-ui,redis"
+# `extractors` is intentionally excluded: the four rquest/boring-based
+# extractors exist to bypass Cloudflare via TLS fingerprinting, which is
+# a desktop/Android concern.  boring-sys also has iOS link-time issues
+# (missing `___chkstk_darwin` for older deployment targets).
+FEATURES="ffi,hls,mpd,drm,xtream,web-ui"
 XCFRAMEWORK_OUT="$PROJECT_DIR/MediaflowProxy.xcframework"
 HEADERS_DIR="$PROJECT_DIR/include"
+
+# Minimum iOS version — needs to be high enough for modern dependencies'
+# system intrinsic requirements (boring-sys' chkstk_darwin, zstd-sys).
+export IPHONEOS_DEPLOYMENT_TARGET="${IPHONEOS_DEPLOYMENT_TARGET:-13.0}"
 
 if [[ ! -f "$HEADERS_DIR/mediaflow_ffi.h" ]]; then
     echo "ERROR: $HEADERS_DIR/mediaflow_ffi.h not found." >&2

@@ -86,6 +86,9 @@ jobs:
           export CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER="$TOOLCHAIN/bin/aarch64-linux-android21-clang"
           export CC_aarch64_linux_android="$TOOLCHAIN/bin/aarch64-linux-android21-clang"
           export AR_aarch64_linux_android="$TOOLCHAIN/bin/llvm-ar"
+          # NDK r23+ dropped legacy `<target>-ranlib` shims; vendored-openssl's
+          # Makefile hard-codes that name — redirect to llvm-ranlib.
+          export RANLIB_aarch64_linux_android="$TOOLCHAIN/bin/llvm-ranlib"
           cargo build \
             --release \
             --target aarch64-linux-android \
@@ -108,9 +111,17 @@ jobs:
           targets: aarch64-apple-ios
 
       - name: Build (device)
+        # IPHONEOS_DEPLOYMENT_TARGET=13.0: some deps (boring-sys, zstd-sys)
+        # require modern system intrinsics (e.g. ___chkstk_darwin).
+        #
+        # `extractors` is intentionally omitted — the rquest/boring HTTP client
+        # used by 4 Cloudflare-bypassing extractors cannot link against
+        # iOS system libraries cleanly, and iOS apps have no use for them.
+        env:
+          IPHONEOS_DEPLOYMENT_TARGET: "13.0"
         run: |
           cargo build \
             --release \
             --target aarch64-apple-ios \
             --no-default-features \
-            --features "ffi,hls,mpd,drm,xtream,extractors"
+            --features "ffi,hls,mpd,drm,xtream"
