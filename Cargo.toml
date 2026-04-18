@@ -8,6 +8,16 @@ edition = "2021"
 [package.metadata.cargo-machete]
 ignored = ["deadpool-redis", "redis", "openssl"]
 
+# Replace the `os_info` crate with a ~100-line stub in crates/os_info_stub/.
+# Upstream pulls in `objc2-ui-kit` + `objc2-foundation` on iOS — ~23 MB of
+# compiled UIKit bindings — purely to produce a system-info string that
+# grammers-client passes to Telegram's InitConnection.  We don't need
+# actual OS detection; a generic "iOS" / "64-bit" / "Unknown" is fine.
+#
+# Applies to ALL targets (stub is tiny, behaviour is benign everywhere).
+[patch.crates-io]
+os_info = { path = "crates/os_info_stub" }
+
 # ---------------------------------------------------------------------------
 # Features
 # ---------------------------------------------------------------------------

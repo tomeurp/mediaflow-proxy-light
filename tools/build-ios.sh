@@ -2,10 +2,19 @@
 # ---------------------------------------------------------------------------
 # Build the MediaFlow Proxy Light static library as an iOS .xcframework.
 #
+# Ships two slices:
+#   - aarch64-apple-ios       (physical iPhone / iPad)
+#   - aarch64-apple-ios-sim   (iOS simulator running on Apple Silicon Mac)
+#
+# Intel Mac iOS simulator (x86_64-apple-ios) is intentionally not included:
+# Apple stopped selling Intel Macs in 2023, the iOS 17+ simulator on Intel
+# is unsupported by Xcode, and the extra slice adds ~107 MB to the archive.
+# Set INCLUDE_X86_64_SIM=1 to opt in if you really need it.
+#
 # Requirements:
 #   - Xcode installed with command-line tools
 #   - Rust iOS targets:
-#       rustup target add aarch64-apple-ios aarch64-apple-ios-sim x86_64-apple-ios
+#       rustup target add aarch64-apple-ios aarch64-apple-ios-sim
 #
 # Usage:
 #   ./tools/build-ios.sh
@@ -49,34 +58,49 @@ if [[ ! -f "$HEADERS_DIR/mediaflow_ffi.h" ]]; then
     exit 1
 fi
 
-echo "==> Building for aarch64-apple-ios (device)"
-cargo build \
-    --release \
-    --target aarch64-apple-ios \
-    --features "$FEATURES" \
-    --manifest-path "$PROJECT_DIR/Cargo.toml"
+# Targets — `x86_64-apple-ios` opt-in only (see header comment).
+TARGETS=(aarch64-apple-ios aarch64-apple-ios-sim)
+if [[ "${INCLUDE_X86_64_SIM:-}" == "1" ]]; then
+    TARGETS+=(x86_64-apple-ios)
+fi
 
-echo "==> Building for aarch64-apple-ios-sim (Apple Silicon simulator)"
-cargo build \
-    --release \
-    --target aarch64-apple-ios-sim \
-    --features "$FEATURES" \
-    --manifest-path "$PROJECT_DIR/Cargo.toml"
+# Build each iOS target — `[profile.release]` produces optimised static
+# archives but Cargo's `strip = true` doesn't apply to them, so we strip
+# manually below.
+for TARGET in "${TARGETS[@]}"; do
+    echo "==> Building for $TARGET"
+    cargo build \
+        --release \
+        --target "$TARGET" \
+        --features "$FEATURES" \
+        --manifest-path "$PROJECT_DIR/Cargo.toml"
+done
 
-echo "==> Building for x86_64-apple-ios (Intel Mac simulator)"
-cargo build \
-    --release \
-    --target x86_64-apple-ios \
-    --features "$FEATURES" \
-    --manifest-path "$PROJECT_DIR/Cargo.toml"
+# Strip debug info + local symbols from each .a.  Keeps public symbols
+# required for Swift to link against (SSL_*, mediaflow_* FFI exports).
+# Typically cuts each archive size by ~25% before zip compression.
+echo "==> Stripping debug info from static archives"
+for TARGET in "${TARGETS[@]}"; do
+    LIB="$PROJECT_DIR/target/$TARGET/release/libmediaflow_proxy_light.a"
+    BEFORE=$(du -h "$LIB" | cut -f1)
+    # -S removes debug symbols, -x removes local (non-global) symbols.
+    # Global symbols are preserved — Swift's linker needs them.
+    strip -S -x "$LIB"
+    AFTER=$(du -h "$LIB" | cut -f1)
+    echo "    $TARGET:  $BEFORE  →  $AFTER"
+done
 
-# Merge simulator slices into a fat library
-SIM_UNIVERSAL="$PROJECT_DIR/target/libmediaflow_sim_universal.a"
-echo "==> Creating universal simulator library"
-lipo -create \
-    "$PROJECT_DIR/target/aarch64-apple-ios-sim/release/libmediaflow_proxy_light.a" \
-    "$PROJECT_DIR/target/x86_64-apple-ios/release/libmediaflow_proxy_light.a" \
-    -output "$SIM_UNIVERSAL"
+# Produce the simulator library.  If we built only arm64, use it directly;
+# if we also built x86_64 (INCLUDE_X86_64_SIM=1), lipo them into a universal.
+SIM_LIB="$PROJECT_DIR/target/aarch64-apple-ios-sim/release/libmediaflow_proxy_light.a"
+if [[ "${INCLUDE_X86_64_SIM:-}" == "1" ]]; then
+    SIM_LIB="$PROJECT_DIR/target/libmediaflow_sim_universal.a"
+    echo "==> Creating universal simulator library (arm64 + x86_64)"
+    lipo -create \
+        "$PROJECT_DIR/target/aarch64-apple-ios-sim/release/libmediaflow_proxy_light.a" \
+        "$PROJECT_DIR/target/x86_64-apple-ios/release/libmediaflow_proxy_light.a" \
+        -output "$SIM_LIB"
+fi
 
 # Remove old xcframework if it exists
 rm -rf "$XCFRAMEWORK_OUT"
@@ -85,9 +109,13 @@ echo "==> Creating xcframework"
 xcodebuild -create-xcframework \
     -library "$PROJECT_DIR/target/aarch64-apple-ios/release/libmediaflow_proxy_light.a" \
     -headers "$HEADERS_DIR" \
-    -library "$SIM_UNIVERSAL" \
+    -library "$SIM_LIB" \
     -headers "$HEADERS_DIR" \
     -output "$XCFRAMEWORK_OUT"
+
+echo ""
+echo "==> xcframework size:"
+du -sh "$XCFRAMEWORK_OUT"
 
 echo ""
 echo "==> Done: $XCFRAMEWORK_OUT"
