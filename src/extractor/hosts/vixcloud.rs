@@ -1,6 +1,7 @@
 use async_trait::async_trait;
 use regex::Regex;
 use scraper::{Html, Selector};
+use serde_json::Value;
 use std::collections::HashMap;
 use std::sync::OnceLock;
 
@@ -44,7 +45,31 @@ impl Extractor for VixCloudExtractor {
         url: &str,
         _extra: &ExtraParams,
     ) -> Result<ExtractorResult, ExtractorError> {
-        let (html, _) = self.0.get_text(url, None).await?;
+        let html = if url.contains("/movie") || url.contains("/tv") {
+            let marker = if url.contains("/movie") { "/movie" } else { "/tv" };
+            let (site_url, rest) = url
+                .split_once(marker)
+                .map(|(s, r)| (s.to_string(), format!("{marker}{r}")))
+                .ok_or_else(|| ExtractorError::extract("VixCloud: cannot split movie/tv URL"))?;
+
+            let api_url = format!("{site_url}/api{rest}");
+            let (api_body, _) = self.0.get_text(&api_url, None).await?;
+            let api_json: Value = serde_json::from_str(&api_body).map_err(|e| {
+                ExtractorError::extract(format!("VixCloud: /api response not JSON: {e}"))
+            })?;
+            let src = api_json
+                .get("src")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| ExtractorError::extract("VixCloud: /api response missing 'src'"))?;
+
+            let player_url = format!("{site_url}/{src}");
+            let mut headers = HashMap::new();
+            headers.insert("referer".to_string(), format!("{site_url}/"));
+            headers.insert("origin".to_string(), site_url.clone());
+            self.0.get_text(&player_url, Some(headers)).await?.0
+        } else {
+            self.0.get_text(url, None).await?.0
+        };
 
         let doc = Html::parse_document(&html);
         let script_sel = Selector::parse("body > script").unwrap();

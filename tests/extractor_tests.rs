@@ -201,6 +201,7 @@ extractor_test!(test_supervideo, "supervideo");
 extractor_test!(test_turbovidplay, "turbovidplay");
 extractor_test!(test_uqload, "uqload");
 extractor_test!(test_vavoo, "vavoo");
+extractor_test!(test_vidfast, "vidfast");
 extractor_test!(test_vidmoly, "vidmoly");
 extractor_test!(test_vidoza, "vidoza");
 extractor_test!(test_vixcloud, "vixcloud");

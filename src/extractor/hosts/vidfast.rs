@@ -17,16 +17,15 @@
 
 use async_trait::async_trait;
 use regex::Regex;
-use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
+use rquest::header::{HeaderMap, HeaderName, HeaderValue};
 use std::collections::HashMap;
 use std::str::FromStr;
 use std::sync::OnceLock;
 
 use crate::extractor::base::{
-    BaseExtractor, ExtraParams, Extractor, ExtractorError, ExtractorResult,
+    build_chrome_client, BaseExtractor, ExtraParams, Extractor, ExtractorError, ExtractorResult,
 };
 
-// Static compiled regexes — compiled once on first use, reused on all subsequent calls.
 fn hash_re() -> &'static Regex {
     static RE: OnceLock<Regex> = OnceLock::new();
     RE.get_or_init(|| Regex::new(r#"data-hash="([^"]+)""#).unwrap())
@@ -42,16 +41,18 @@ fn file_re() -> &'static Regex {
 
 pub struct VidFastExtractor {
     base: BaseExtractor,
+    chrome_client: rquest::Client,
 }
 
 impl VidFastExtractor {
     pub fn new(request_headers: HashMap<String, String>, proxy_url: Option<String>) -> Self {
+        let chrome_client = build_chrome_client(proxy_url.as_deref());
         Self {
             base: BaseExtractor::new(request_headers, proxy_url),
+            chrome_client,
         }
     }
 
-    /// Build a HeaderMap from the extractor's base headers plus extra pairs.
     fn make_headers(&self, extra: &[(&str, &str)]) -> HeaderMap {
         let mut hm = HeaderMap::new();
         for (k, v) in &self.base.base_headers {
@@ -67,11 +68,9 @@ impl VidFastExtractor {
         hm
     }
 
-    /// GET url → response body as String.
-    async fn get_text(&self, url: &str, headers: HeaderMap) -> Result<String, ExtractorError> {
+    async fn chrome_get(&self, url: &str, headers: HeaderMap) -> Result<String, ExtractorError> {
         let resp = self
-            .base
-            .client
+            .chrome_client
             .get(url)
             .headers(headers)
             .send()
@@ -103,8 +102,6 @@ impl Extractor for VidFastExtractor {
         url: &str,
         _extra: &ExtraParams,
     ) -> Result<ExtractorResult, ExtractorError> {
-        // ── Parse TMDB ID from URL path ────────────────────────────────────
-        // Expected: /movie/{tmdb_id} or /tv/{tmdb_id}/{season}/{episode}
         let path = url
             .split_once("://")
             .and_then(|(_, rest)| rest.split_once('/'))
@@ -120,8 +117,7 @@ impl Extractor for VidFastExtractor {
         let tmdb_id = parts[1];
         let ythd_url = format!("https://ythd.org/embed/{tmdb_id}");
 
-        // ── Step 1: ythd.org embed page ───────────────────────────────────
-        let ythd_html = self.get_text(&ythd_url, self.make_headers(&[])).await?;
+        let ythd_html = self.chrome_get(&ythd_url, self.make_headers(&[])).await?;
 
         let data_hash = hash_re()
             .captures(&ythd_html)
@@ -129,10 +125,9 @@ impl Extractor for VidFastExtractor {
             .map(|m| m.as_str().to_owned())
             .ok_or_else(|| ExtractorError::extract("VidFast: no data-hash on ythd.org page"))?;
 
-        // ── Step 2: cloudnestra /rcp/ ─────────────────────────────────────
         let rcp_url = format!("https://cloudnestra.com/rcp/{data_hash}");
         let rcp_html = self
-            .get_text(&rcp_url, self.make_headers(&[("referer", &ythd_url)]))
+            .chrome_get(&rcp_url, self.make_headers(&[("referer", &ythd_url)]))
             .await?;
 
         let prorcp_hash = prorcp_re()
@@ -141,23 +136,18 @@ impl Extractor for VidFastExtractor {
             .map(|m| m.as_str().to_owned())
             .ok_or_else(|| ExtractorError::extract("VidFast: /prorcp/ hash not found"))?;
 
-        // ── Step 3: cloudnestra /prorcp/ ─────────────────────────────────
         let prorcp_url = format!("https://cloudnestra.com/prorcp/{prorcp_hash}");
         let prorcp_html = self
-            .get_text(&prorcp_url, self.make_headers(&[("referer", &rcp_url)]))
+            .chrome_get(&prorcp_url, self.make_headers(&[("referer", &rcp_url)]))
             .await?;
 
-        // ── Step 4: parse Playerjs file URL ──────────────────────────────
         let full_file = file_re()
             .captures(&prorcp_html)
             .and_then(|c| c.get(1))
             .map(|m| m.as_str())
             .ok_or_else(|| ExtractorError::extract("VidFast: Playerjs file URL not found"))?;
 
-        // Multiple CDN fallbacks separated by " or "; use the first.
         let first_url = full_file.split(" or ").next().unwrap_or("").trim();
-
-        // {v1} → cloudnestra.com (primary CDN for the tmstr4 proxy)
         let stream_url = first_url.replace("{v1}", "cloudnestra.com");
 
         if !stream_url.starts_with("https://") {
@@ -167,7 +157,6 @@ impl Extractor for VidFastExtractor {
             )));
         }
 
-        // ── Result headers ────────────────────────────────────────────────
         let mut result_headers = HashMap::new();
         if let Some(ua) = self.base.base_headers.get("user-agent") {
             result_headers.insert("user-agent".to_string(), ua.clone());
