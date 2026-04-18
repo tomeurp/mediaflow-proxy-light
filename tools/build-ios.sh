@@ -19,13 +19,23 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 
-# `extractors` is intentionally excluded: the four rquest/boring-based
-# extractors exist to bypass Cloudflare via TLS fingerprinting, which is
-# a desktop/Android concern.  boring-sys also has iOS link-time issues
-# (missing `___chkstk_darwin` for older deployment targets).
-# tls-rustls avoids native-tls → openssl-sys, which wouldn't cross-compile
-# for iOS without extra work.
-FEATURES="ffi,hls,mpd,drm,xtream,web-ui,tls-rustls"
+# iOS feature set — all proxy features relevant on-device are enabled.
+#
+# Included:
+#   ffi         — required: the C bridge used by the Swift wrapper app
+#   hls,mpd,drm — core streaming + DASH/DRM
+#   xtream      — IPTV provider API
+#   extractors  — video-host extractors (Cloudflare bypass works once
+#                 IPHONEOS_DEPLOYMENT_TARGET is ≥ 13.0, see below)
+#   telegram    — MTProto streaming from Telegram media
+#   acestream   — P2P BitTorrent live streams
+#   web-ui,base64-url — on-device UI + utilities
+#   tls-rustls  — pure-Rust TLS (avoids openssl-sys cross-compile)
+#
+# Excluded:
+#   transcode — needs ffmpeg subprocess, not possible on iOS sandbox
+#   redis     — external cache, not useful on-device (local cache used instead)
+FEATURES="ffi,hls,mpd,drm,xtream,extractors,telegram,acestream,web-ui,base64-url,tls-rustls"
 XCFRAMEWORK_OUT="$PROJECT_DIR/MediaflowProxy.xcframework"
 HEADERS_DIR="$PROJECT_DIR/include"
 

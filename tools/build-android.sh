@@ -53,13 +53,22 @@ esac
 [[ -d "$NDK_BIN" ]] || { echo "NDK toolchain not found at $NDK_BIN" >&2; exit 1; }
 export PATH="$NDK_BIN:$PATH"
 
-# Feature set — mirrors the Android release CI.  Keep in sync with the
-# `mediaflow-android` release workflow.
-# - `tls-rustls` instead of `tls-native`: avoids linker conflicts between
-#   system OpenSSL and the BoringSSL shipped by rquest's `boring-sys2`.
-# - `web-ui` included so the on-device web UI (served on localhost) works
-#   when the user opens the configurator from a browser.
-FEATURES="hls,mpd,drm,xtream,extractors,base64-url,tls-rustls,acestream,web-ui"
+# Android feature set — mirrors iOS, minus the `ffi` bridge.
+#
+# Included:
+#   hls,mpd,drm — core streaming + DASH/DRM
+#   xtream      — IPTV provider API
+#   extractors  — video-host extractors (incl. rquest-based Cloudflare bypass)
+#   telegram    — MTProto streaming from Telegram media
+#   acestream   — P2P BitTorrent live streams
+#   web-ui,base64-url — on-device UI + utilities
+#   tls-rustls  — pure-Rust TLS (avoids openssl-sys ↔ boring-sys2 symbol clash)
+#
+# Excluded:
+#   transcode — needs ffmpeg subprocess; Android apps can't execute arbitrary
+#               binaries outside the sandboxed nativeLibraryDir
+#   redis     — external cache, not useful on-device
+FEATURES="hls,mpd,drm,xtream,extractors,telegram,acestream,web-ui,base64-url,tls-rustls"
 
 # All ABIs supported by default
 ALL_TARGETS=(
