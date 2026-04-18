@@ -6,7 +6,7 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
-  RUST_VERSION: 1.89.0
+  RUST_VERSION: 1.95.0
   DOCKER_IMAGE: ghcr.io/${{ github.repository }}
 
 permissions:
@@ -46,7 +46,7 @@ jobs:
             asset_name: mediaflow-proxy-light-windows-x86_64.exe
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@master
@@ -58,12 +58,19 @@ jobs:
         if: matrix.target == 'aarch64-unknown-linux-gnu'
         run: |
           sudo apt-get update
-          sudo apt-get install -y gcc-aarch64-linux-gnu
+          sudo apt-get install -y gcc-aarch64-linux-gnu g++-aarch64-linux-gnu
 
       - name: Set cross-compilation environment
         if: matrix.target == 'aarch64-unknown-linux-gnu'
         run: |
+          # Rust linker
           echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc" >> $GITHUB_ENV
+          # C/C++ cross-compilers for cc-rs driven build.rs scripts (boring-sys2,
+          # zstd-sys, ring).  Without these they compile for the host (x86_64)
+          # and the final link fails with `Relocations in generic ELF (EM: 62)`.
+          echo "CC_aarch64_unknown_linux_gnu=aarch64-linux-gnu-gcc"  >> $GITHUB_ENV
+          echo "CXX_aarch64_unknown_linux_gnu=aarch64-linux-gnu-g++" >> $GITHUB_ENV
+          echo "AR_aarch64_unknown_linux_gnu=aarch64-linux-gnu-ar"   >> $GITHUB_ENV
 
       - name: Build
         # The default features include `tls-rustls` (pure-Rust TLS), so no
@@ -89,7 +96,7 @@ jobs:
     name: iOS · xcframework
     runs-on: macos-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Install Rust + iOS targets
         uses: dtolnay/rust-toolchain@master
@@ -98,7 +105,7 @@ jobs:
           targets: aarch64-apple-ios,aarch64-apple-ios-sim,x86_64-apple-ios
 
       - name: Cache cargo build
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: |
             ~/.cargo/registry
@@ -123,7 +130,76 @@ jobs:
           overwrite: true
 
   # ---------------------------------------------------------------------------
-  # Docker multi-arch image (uses pre-built Linux binaries from build-binaries)
+  # Android — native proxy binaries per ABI.
+  #
+  # This repo produces ONLY the stripped `libmediaflow-proxy.so` artifacts for
+  # each supported ABI.  The full APK (Kotlin UI + these binaries bundled in
+  # `jniLibs/`) is built by the companion `mediaflow-android` repo's own
+  # release workflow, which consumes these artifacts.
+  # ---------------------------------------------------------------------------
+  build-android:
+    name: Android · ${{ matrix.abi }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - abi: arm64-v8a
+            target: aarch64-linux-android
+          - abi: armeabi-v7a
+            target: armv7-linux-androideabi
+          - abi: x86_64
+            target: x86_64-linux-android
+          - abi: x86
+            target: i686-linux-android
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ env.RUST_VERSION }}
+          targets: ${{ matrix.target }}
+
+      - name: Set up Android NDK
+        id: ndk
+        uses: nttld/setup-ndk@v1
+        with:
+          ndk-version: r26d
+
+      - name: Build for ${{ matrix.abi }}
+        env:
+          ANDROID_NDK_HOME: ${{ steps.ndk.outputs.ndk-path }}
+          # Build only this one ABI to keep job parallelism from the matrix.
+          ABIS: ${{ matrix.abi }}
+          # Skip the auto-copy-into-sibling-Android-project step — no sibling
+          # checkout exists on the runner.
+          ANDROID_APP_DIR: ""
+        run: |
+          chmod +x tools/build-android.sh
+          ./tools/build-android.sh
+
+      - name: Package binary
+        run: |
+          OUT="mediaflow-proxy-light-android-${{ matrix.abi }}.tar.gz"
+          tar -czvf "$OUT" \
+            -C target/${{ matrix.target }}/release \
+            libmediaflow-proxy.so
+          echo "ASSET=$OUT" >> $GITHUB_ENV
+
+      - name: Upload to release
+        uses: svenstaro/upload-release-action@v2
+        with:
+          repo_token: ${{ secrets.GITHUB_TOKEN }}
+          file: ${{ env.ASSET }}
+          asset_name: ${{ env.ASSET }}
+          tag: ${{ github.ref }}
+          overwrite: true
+
+  # ---------------------------------------------------------------------------
+  # Docker multi-arch image — reuses the Linux binaries just produced by
+  # `build-binaries`, so no Rust toolchain is pulled into the image and the
+  # build is ~seconds instead of ~hour (no QEMU Rust cross-compile).
   # ---------------------------------------------------------------------------
   build-docker:
     name: Docker multi-arch image
@@ -134,7 +210,7 @@ jobs:
       packages: write
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3

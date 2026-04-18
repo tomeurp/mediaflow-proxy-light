@@ -1,45 +1,44 @@
-# Build stage
-FROM rust:1.84-slim-bullseye AS builder
+# ---------------------------------------------------------------------------
+# Multi-stage Dockerfile — builds from source.
+#
+# Multi-arch (linux/amd64 + linux/arm64) is handled by Docker buildx.  Under
+# QEMU the arm64 build is slower, but this lets the Docker job run in
+# parallel with the desktop/mobile binary builds in CI without any
+# cross-job artifact choreography.
+#
+# TLS backend: `tls-rustls` (the crate default) → no system OpenSSL needed.
+# ---------------------------------------------------------------------------
+
+FROM rust:1.95-slim-bookworm AS builder
 
 WORKDIR /usr/src/app
 
-# Install build dependencies (including tools needed for vendored OpenSSL)
-RUN apt-get update && \
-    apt-get install -y \
+# Minimal build deps — no OpenSSL (rustls is pure Rust).
+RUN apt-get update && apt-get install -y --no-install-recommends \
         pkg-config \
-        libssl-dev \
         build-essential \
-        make \
-        perl \
-        && \
-    rm -rf /var/lib/apt/lists/*
+        && rm -rf /var/lib/apt/lists/*
 
-# Copy dependency files first for better caching
+# Dependency-only prebuild for layer caching
 COPY Cargo.toml Cargo.lock ./
-
-# Create a dummy main.rs to build dependencies
 RUN mkdir src && \
     echo "fn main() {}" > src/main.rs && \
-    echo "pub fn add(left: usize, right: usize) -> usize { left + right }" > src/lib.rs
-
-# Build dependencies (this layer will be cached unless Cargo.toml/Cargo.lock changes)
-# Use system OpenSSL in Docker for faster builds
-RUN cargo build --release && \
+    echo "pub fn add(l: usize, r: usize) -> usize { l + r }" > src/lib.rs && \
+    cargo build --release && \
     rm -rf src target/release/deps/mediaflow*
 
-# Copy source code
-COPY src ./src
+# Real build
+COPY src  ./src
 COPY tools ./tools
-
-# Build the actual application
 RUN cargo build --release
 
-# Runtime stage - use distroless for smaller size and better security
-FROM gcr.io/distroless/cc-debian11
+# ---------------------------------------------------------------------------
+# Runtime — distroless (glibc only, no shell/apt/etc.)
+# ---------------------------------------------------------------------------
+FROM gcr.io/distroless/cc-debian12
 
 WORKDIR /app
 
-# Copy the binary
 COPY --from=builder /usr/src/app/target/release/mediaflow-proxy-light /app/
 COPY config-example.toml /app/config.toml
 
