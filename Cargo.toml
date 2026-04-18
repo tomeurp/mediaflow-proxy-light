@@ -57,8 +57,13 @@ transcode = []
 ffi = []    # iOS C FFI bridge (used when building xcframework)
 
 # TLS backends for `reqwest` (choose one — enabled via --features)
+# `rustls-tls-webpki-roots` bundles Mozilla's CA list into the binary instead
+# of probing the host filesystem (`rustls-tls-native-roots`).  Required for
+# Android/iOS where the system trust store isn't at standard Unix paths
+# (`/etc/ssl/*`) that `openssl-probe` scans → an empty root store → every
+# TLS handshake fails cert verification.
 tls-native = ["reqwest/native-tls"]
-tls-rustls = ["reqwest/rustls-tls-native-roots"]
+tls-rustls = ["reqwest/rustls-tls-webpki-roots"]
 
 # Optional: vendored OpenSSL (only relevant when `tls-native` is used on
 # platforms without a system OpenSSL, e.g. some cross-compiles).

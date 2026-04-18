@@ -417,6 +417,7 @@ async fn fetch_chunk(
     cfg: &crate::config::TelegramConfig,
     location: &tl::enums::InputFileLocation,
     dc_id: i32,
+    home_dc_id: i32,
     chunk_offset: u64,
     reconnect_count: &mut u32,
 ) -> Result<Option<Vec<u8>>, AppError> {
@@ -436,13 +437,23 @@ async fn fetch_chunk(
             limit: MAX_CHUNK,
         };
 
-        // Go directly to the file's DC — skip the home-DC roundtrip that always
-        // returns FILE_MIGRATE_4 and doubles per-chunk latency.
-        let r = match client.invoke_in_dc(&request, dc_id).await {
-            Err(grammers_client::InvocationError::Read(_)) => {
-                Err(grammers_client::InvocationError::Dropped)
+        // When the file is on the home DC, invoke directly — auth.exportAuthorization
+        // to the same DC is rejected by Telegram with DC_ID_INVALID.
+        // For foreign DCs, invoke_in_dc handles auth export automatically.
+        let r = if dc_id == home_dc_id {
+            match client.invoke(&request).await {
+                Err(grammers_client::InvocationError::Read(_)) => {
+                    Err(grammers_client::InvocationError::Dropped)
+                }
+                other => other,
             }
-            other => other,
+        } else {
+            match client.invoke_in_dc(&request, dc_id).await {
+                Err(grammers_client::InvocationError::Read(_)) => {
+                    Err(grammers_client::InvocationError::Dropped)
+                }
+                other => other,
+            }
         };
 
         let is_io_err = matches!(
@@ -514,13 +525,17 @@ pub async fn stream_document_range(
     end: u64,
 ) -> impl Stream<Item = Result<Bytes, AppError>> {
     let aligned_start = (start / MAX_CHUNK as u64) * MAX_CHUNK as u64;
+    let home_dc_id = parse_telethon_session(&cfg.session_string)
+        .map(|(id, _, _)| id)
+        .unwrap_or(-1);
     debug!(
-        "tg stream: start={} end={} total={} aligned_start={} dc={}",
+        "tg stream: start={} end={} total={} aligned_start={} dc={} home_dc={}",
         start,
         end,
         end - start + 1,
         aligned_start,
-        dc_id
+        dc_id,
+        home_dc_id,
     );
 
     stream! {
@@ -536,7 +551,7 @@ pub async fn stream_document_range(
                 break;
             }
 
-            match fetch_chunk(&mut current_client, &cfg, &location, dc_id, chunk_offset, &mut reconnect_count).await {
+            match fetch_chunk(&mut current_client, &cfg, &location, dc_id, home_dc_id, chunk_offset, &mut reconnect_count).await {
                 Err(e) => {
                     warn!("Telegram fetch error at offset {}: {}", chunk_offset, e);
                     yield Err(e);
