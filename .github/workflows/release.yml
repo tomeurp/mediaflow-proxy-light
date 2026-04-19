@@ -239,3 +239,57 @@ jobs:
           build-args: |
             RELEASE_VERSION=${{ steps.version.outputs.RELEASE_VERSION }}
             BUILDKIT_INLINE_CACHE=1
+
+  # ---------------------------------------------------------------------------
+  # AI-generated release notes — replaces the GitHub-generated release body
+  # with a curated, emoji-friendly summary produced by Gemini from the commit
+  # log between the previous tag and this one.  Mirrors the `generate-notes`
+  # flow used by the upstream mediaflow-proxy repo.
+  # ---------------------------------------------------------------------------
+  generate_release_notes:
+    name: Generate release notes
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Install jq
+        run: sudo apt-get install -y jq
+
+      - name: Persist GitHub-generated release body
+        run: |
+          cat << 'EOF' > github_generated_release_body.md
+          ${{ github.event.release.body }}
+          EOF
+
+      - name: Extract previous version
+        id: extract_versions
+        run: |
+          if ! PREVIOUS_VERSION=$(grep -o '/compare/.*\.\.\.' github_generated_release_body.md | sed 's/\/compare\///' | sed 's/\.\.\.//' || true); then
+            echo "Error: Failed to extract previous version from release body"
+            exit 1
+          fi
+          if [ -z "$PREVIOUS_VERSION" ]; then
+            PREVIOUS_VERSION=$(git describe --tags --abbrev=0 "${{ github.ref_name }}^" 2>/dev/null || echo "")
+          fi
+          echo "PREVIOUS_VERSION=${PREVIOUS_VERSION}" >> "$GITHUB_OUTPUT"
+
+      - name: Generate Release Notes
+        run: |
+          make generate-notes \
+            VERSION_OLD=${{ steps.extract_versions.outputs.PREVIOUS_VERSION }} \
+            VERSION_NEW=${{ github.ref_name }} \
+            GEMINI_API_KEY=${{ secrets.GEMINI_API_KEY }} \
+            GITHUB_RELEASE_BODY_FILE=github_generated_release_body.md \
+            > release_notes.md
+
+      - name: Update Release Notes
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          body_path: release_notes.md
+          token: ${{ secrets.GITHUB_TOKEN }}
