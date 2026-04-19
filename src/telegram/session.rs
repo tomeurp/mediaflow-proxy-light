@@ -619,6 +619,15 @@ impl TelegramSessionManager {
             .map(|g| g.is_some())
             .unwrap_or(false)
     }
+
+    /// True when the supplied config has telegram.api_id / api_hash /
+    /// session_string filled in (the three fields required before the
+    /// manager will ever attempt to connect).  Used by the /status handler
+    /// to distinguish "disabled" (never configured) from "not_connected"
+    /// (configured but hasn't been asked to connect yet / auth invalid).
+    pub fn is_configured(cfg: &crate::config::TelegramConfig) -> bool {
+        cfg.api_id > 0 && !cfg.api_hash.is_empty() && !cfg.session_string.is_empty()
+    }
 }
 
 static MANAGER: OnceLock<Arc<tokio::sync::RwLock<TelegramSessionManager>>> = OnceLock::new();

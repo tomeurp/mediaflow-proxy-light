@@ -1496,7 +1496,13 @@
                         <h4 class="font-semibold text-gray-800 dark:text-white">Two-Factor Authentication</h4>
                     </div>
                     <p class="text-sm text-gray-600 dark:text-gray-400 mb-4">Your account has 2FA enabled. Please enter your cloud password.</p>
-                    
+
+                    <!-- Populated from the verify-step response's `hint` field (if set). -->
+                    <div id="session-2fa-hint-box" class="hidden mb-4 bg-violet-50 dark:bg-violet-900/20 border border-violet-200 dark:border-violet-800 rounded-xl p-3 text-sm text-violet-700 dark:text-violet-300">
+                        <i class="fa-solid fa-key mr-2"></i>
+                        Hint: <span id="session-2fa-hint" class="font-medium"></span>
+                    </div>
+
                     <div class="space-y-4">
                         <div>
                             <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">2FA Password <span class="text-red-500">*</span></label>
@@ -1521,26 +1527,77 @@
                         <div class="flex-shrink-0 w-8 h-8 rounded-full bg-gradient-to-br from-green-500 to-emerald-600 flex items-center justify-center text-white font-bold text-sm">✓</div>
                         <h4 class="font-semibold text-gray-800 dark:text-white">Session String Generated!</h4>
                     </div>
-                    
+
                     <div class="bg-green-50 dark:bg-green-900/20 rounded-xl p-4 border border-green-200 dark:border-green-800 mb-4">
-                        <p class="text-sm text-green-700 dark:text-green-300">Your session string has been generated successfully. Copy the configuration below and add it to your environment variables.</p>
+                        <p class="text-sm text-green-700 dark:text-green-300">Your session string has been generated successfully. Paste the three fields below into whichever configuration method your deployment uses.</p>
+                    </div>
+
+                    <!-- Tab strip: env | config.toml | Android -->
+                    <div class="flex gap-2 mb-3 border-b border-gray-200 dark:border-gray-700">
+                        <button onclick="selectSessionConfigTab('env')"
+                                id="session-config-tab-env"
+                                class="session-config-tab active-session-tab px-4 py-2 text-sm font-semibold border-b-2 border-violet-500 text-violet-600 dark:text-violet-400">
+                            Env vars
+                        </button>
+                        <button onclick="selectSessionConfigTab('toml')"
+                                id="session-config-tab-toml"
+                                class="session-config-tab px-4 py-2 text-sm font-semibold border-b-2 border-transparent text-gray-600 dark:text-gray-400 hover:text-gray-800 dark:hover:text-gray-200">
+                            config.toml
+                        </button>
+                        <button onclick="selectSessionConfigTab('android')"
+                                id="session-config-tab-android"
+                                class="session-config-tab px-4 py-2 text-sm font-semibold border-b-2 border-transparent text-gray-600 dark:text-gray-400 hover:text-gray-800 dark:hover:text-gray-200">
+                            Android app
+                        </button>
                     </div>
 
                     <div class="space-y-4">
-                        <div>
-                            <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Environment Configuration</label>
+                        <!-- Env tab -->
+                        <div id="session-config-body-env" class="session-config-body">
+                            <p class="text-xs text-gray-500 dark:text-gray-400 mb-2">For a shell / Docker / systemd deployment. mediaflow-proxy-light reads <code>APP__&lt;section&gt;__&lt;field&gt;</code>:</p>
                             <div class="bg-gray-900 rounded-xl p-4 font-mono text-sm text-green-400 overflow-x-auto">
                                 <div class="space-y-1">
-                                    <div>ENABLE_TELEGRAM=true</div>
-                                    <div>TELEGRAM_API_ID=<span id="session-result-api-id"></span></div>
-                                    <div>TELEGRAM_API_HASH=<span id="session-result-api-hash"></span></div>
-                                    <div class="break-all">TELEGRAM_SESSION_STRING=<span id="session-result-string"></span></div>
+                                    <div>APP__TELEGRAM__API_ID=<span id="session-result-api-id"></span></div>
+                                    <div>APP__TELEGRAM__API_HASH=<span id="session-result-api-hash"></span></div>
+                                    <div class="break-all">APP__TELEGRAM__SESSION_STRING=<span id="session-result-string"></span></div>
                                 </div>
                             </div>
-                            <button onclick="copySessionConfig(event)" class="copy-btn mt-3 px-6 py-2.5 rounded-xl text-white font-semibold text-sm">
-                                📋 Copy Configuration
-                            </button>
                         </div>
+
+                        <!-- TOML tab -->
+                        <div id="session-config-body-toml" class="session-config-body hidden">
+                            <p class="text-xs text-gray-500 dark:text-gray-400 mb-2">Add to <code>config.toml</code> next to the binary (or point <code>CONFIG_PATH</code> at it):</p>
+                            <div class="bg-gray-900 rounded-xl p-4 font-mono text-sm text-green-400 overflow-x-auto">
+                                <div class="space-y-1">
+                                    <div>[telegram]</div>
+                                    <div>api_id = <span id="session-result-api-id-toml"></span></div>
+                                    <div>api_hash = "<span id="session-result-api-hash-toml"></span>"</div>
+                                    <div class="break-all">session_string = "<span id="session-result-string-toml"></span>"</div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Android tab -->
+                        <div id="session-config-body-android" class="session-config-body hidden">
+                            <p class="text-xs text-gray-500 dark:text-gray-400 mb-2">The Android app persists its own config via the in-app settings screen (DataStore):</p>
+                            <ol class="list-decimal list-inside text-sm text-gray-700 dark:text-gray-300 space-y-1 mb-3">
+                                <li>Open <span class="font-semibold">Config</span> from the bottom nav (phone) or <span class="font-semibold">Advanced → All Settings</span> (TV).</li>
+                                <li>Scroll to the <span class="font-semibold">Telegram</span> category.</li>
+                                <li>Paste the three values below into <span class="font-mono">API ID</span>, <span class="font-mono">API Hash</span>, and <span class="font-mono">Session String</span>.</li>
+                                <li>Tap <span class="font-semibold">Save</span> — the proxy auto-restarts with the new config.</li>
+                            </ol>
+                            <div class="bg-gray-900 rounded-xl p-4 font-mono text-sm text-green-400 overflow-x-auto">
+                                <div class="space-y-1">
+                                    <div>API ID         : <span id="session-result-api-id-android"></span></div>
+                                    <div>API Hash       : <span id="session-result-api-hash-android"></span></div>
+                                    <div class="break-all">Session String : <span id="session-result-string-android"></span></div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <button onclick="copySessionConfig(event)" class="copy-btn mt-3 px-6 py-2.5 rounded-xl text-white font-semibold text-sm">
+                            📋 Copy Configuration
+                        </button>
 
                         <button onclick="resetSessionGenerator()" class="w-full py-3 rounded-xl font-semibold text-sm border-2 border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 transition-all">
                             Generate Another Session
@@ -2984,6 +3041,17 @@
                 if (data.step === 'complete') {
                     showSessionResult(data);
                 } else if (data.step === '2fa_required') {
+                    // Surface the server-provided hint (mediaflow-proxy-light
+                    // sends `hint` in the verify response when the user set
+                    // one on their Telegram cloud-password).
+                    const hintBox = document.getElementById('session-2fa-hint-box');
+                    const hintEl  = document.getElementById('session-2fa-hint');
+                    if (data.hint) {
+                        hintEl.textContent = data.hint;
+                        hintBox.classList.remove('hidden');
+                    } else {
+                        hintBox.classList.add('hidden');
+                    }
                     showStep('2fa');
                 }
             } catch (error) {
@@ -3031,10 +3099,41 @@
         }
 
         function showSessionResult(data) {
-            document.getElementById('session-result-api-id').textContent = data.api_id;
-            document.getElementById('session-result-api-hash').textContent = data.api_hash;
-            document.getElementById('session-result-string').textContent = data.session_string;
+            // Populate each tab's spans so the user can switch freely.
+            const ids = [
+                'session-result-api-id', 'session-result-api-id-toml', 'session-result-api-id-android',
+            ];
+            const hashes = [
+                'session-result-api-hash', 'session-result-api-hash-toml', 'session-result-api-hash-android',
+            ];
+            const strs = [
+                'session-result-string', 'session-result-string-toml', 'session-result-string-android',
+            ];
+            ids.forEach(id => { document.getElementById(id).textContent = data.api_id; });
+            hashes.forEach(id => { document.getElementById(id).textContent = data.api_hash; });
+            strs.forEach(id => { document.getElementById(id).textContent = data.session_string; });
+            selectSessionConfigTab('env');
             showStep(3);
+        }
+
+        // Tracks which tab is active so copySessionConfig knows what to emit.
+        let sessionConfigTab = 'env';
+
+        function selectSessionConfigTab(kind) {
+            sessionConfigTab = kind;
+            ['env', 'toml', 'android'].forEach(k => {
+                const tab  = document.getElementById(`session-config-tab-${k}`);
+                const body = document.getElementById(`session-config-body-${k}`);
+                if (k === kind) {
+                    tab.classList.add('border-violet-500', 'text-violet-600', 'dark:text-violet-400');
+                    tab.classList.remove('border-transparent', 'text-gray-600', 'dark:text-gray-400');
+                    body.classList.remove('hidden');
+                } else {
+                    tab.classList.remove('border-violet-500', 'text-violet-600', 'dark:text-violet-400');
+                    tab.classList.add('border-transparent', 'text-gray-600', 'dark:text-gray-400');
+                    body.classList.add('hidden');
+                }
+            });
         }
 
         async function cancelSession() {
@@ -3066,25 +3165,46 @@
             document.getElementById('session-bot-token').value = '';
             document.getElementById('session-code').value = '';
             document.getElementById('session-2fa-password').value = '';
-            
+
+            // Clear stale 2FA hint between runs.
+            const hintBox = document.getElementById('session-2fa-hint-box');
+            if (hintBox) hintBox.classList.add('hidden');
+
             // Reset to phone auth
             selectSessionAuthType('phone');
-            
+
             // Show step 1
             showStep(1);
         }
 
         function copySessionConfig(event) {
-            const btn = event.currentTarget;  // Capture button reference before async operation
-            const apiId = document.getElementById('session-result-api-id').textContent;
-            const apiHash = document.getElementById('session-result-api-hash').textContent;
+            const btn = event.currentTarget;  // Capture before async op
+            const apiId         = document.getElementById('session-result-api-id').textContent;
+            const apiHash       = document.getElementById('session-result-api-hash').textContent;
             const sessionString = document.getElementById('session-result-string').textContent;
-            
-            const config = `ENABLE_TELEGRAM=true
-TELEGRAM_API_ID=${apiId}
-TELEGRAM_API_HASH=${apiHash}
-TELEGRAM_SESSION_STRING=${sessionString}`;
-            
+
+            // Emit the shape matching the currently-visible tab.
+            let config;
+            switch (sessionConfigTab) {
+                case 'toml':
+                    config = `[telegram]
+api_id = ${apiId}
+api_hash = "${apiHash}"
+session_string = "${sessionString}"`;
+                    break;
+                case 'android':
+                    config = `API ID         : ${apiId}
+API Hash       : ${apiHash}
+Session String : ${sessionString}`;
+                    break;
+                case 'env':
+                default:
+                    config = `APP__TELEGRAM__API_ID=${apiId}
+APP__TELEGRAM__API_HASH=${apiHash}
+APP__TELEGRAM__SESSION_STRING=${sessionString}`;
+                    break;
+            }
+
             const originalText = btn.innerHTML;
             navigator.clipboard.writeText(config).then(() => {
                 btn.innerHTML = '✓ Copied!';

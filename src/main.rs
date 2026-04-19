@@ -251,6 +251,10 @@ async fn main() -> std::io::Result<()> {
             use telegram::handler::{
                 telegram_info_handler, telegram_status_handler, telegram_stream_handler,
             };
+            use telegram::session_gen::{
+                session_2fa_handler, session_cancel_handler, session_start_handler,
+                session_verify_handler,
+            };
             app = app.service(
                 web::scope("/proxy/telegram")
                     .route("/stream", web::get().to(telegram_stream_handler))
@@ -264,7 +268,12 @@ async fn main() -> std::io::Result<()> {
                         web::head().to(telegram_stream_handler),
                     )
                     .route("/info", web::get().to(telegram_info_handler))
-                    .route("/status", web::get().to(telegram_status_handler)),
+                    .route("/status", web::get().to(telegram_status_handler))
+                    // Session-generation endpoints — drive the web UI wizard.
+                    .route("/session/start", web::post().to(session_start_handler))
+                    .route("/session/verify", web::post().to(session_verify_handler))
+                    .route("/session/2fa", web::post().to(session_2fa_handler))
+                    .route("/session/cancel", web::post().to(session_cancel_handler)),
             );
         }
 

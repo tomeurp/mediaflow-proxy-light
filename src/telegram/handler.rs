@@ -255,12 +255,29 @@ pub async fn telegram_info_handler(
 // Status handler
 // ---------------------------------------------------------------------------
 
-pub async fn telegram_status_handler() -> AppResult<HttpResponse> {
+pub async fn telegram_status_handler(config: web::Data<Arc<Config>>) -> AppResult<HttpResponse> {
     let manager = get_manager();
     let mgr = manager.read().await;
 
+    // The web UI's status widget (static/url_generator.html) switches on a
+    // string `status` field: "connected" / "ready" / "disabled" /
+    // "not_connected".  Emit both the legacy boolean + the string shape so
+    // older callers still work.
+    let configured =
+        crate::telegram::session::TelegramSessionManager::is_configured(&config.telegram);
+    let connected = mgr.is_authorized();
+    let status = if !configured {
+        "disabled"
+    } else if connected {
+        "connected"
+    } else {
+        "not_connected"
+    };
+
     Ok(HttpResponse::Ok().json(serde_json::json!({
-        "connected": mgr.is_authorized(),
+        "status": status,
+        "connected": connected,
+        "configured": configured,
         "session_file": mgr.session_file,
     })))
 }
