@@ -265,8 +265,7 @@ pub async fn get_public_ip(stream_manager: web::Data<StreamManager>) -> AppResul
                     if let Some(ip) = data.get(*key).and_then(|v| v.as_str()) {
                         let ip = ip.trim();
                         if !ip.is_empty() {
-                            return Ok(HttpResponse::Ok()
-                                .json(serde_json::json!({ "ip": ip })));
+                            return Ok(HttpResponse::Ok().json(serde_json::json!({ "ip": ip })));
                         }
                     }
                     tracing::warn!("IP lookup {} returned no '{}' field", url, key);
