@@ -244,15 +244,26 @@ impl AcestreamSessionManager {
 
     /// Decrement the client count; stop the engine session only when the last client leaves.
     ///
-    /// A 30-second grace period is applied before stopping: players commonly send a
-    /// short-lived probe GET (a few seconds of data) before the real stream connection,
-    /// and stopping the engine on that probe would kill the session for the real client.
+    /// The session is removed from the map **immediately** when the last client disconnects
+    /// so that any reconnecting client gets a fresh session with a new `pid`.  Reusing an
+    /// old `pid` after the engine closes its getstream connection causes the engine to serve
+    /// only the remaining buffer (a few seconds) instead of starting a fresh live stream.
+    ///
+    /// The engine stop command itself is delayed by 30 seconds: if the reconnect creates a
+    /// new session before the timer fires, the stop is skipped (the new session owns the
+    /// engine lifecycle).  This keeps the engine warm during quick probe → real-connect
+    /// sequences without locking the new client into a stale getstream `pid`.
     pub async fn release_client(&self, infohash: &str) {
         let prev_count = match self.sessions.get(infohash) {
             Some(s) => s.client_count.fetch_sub(1, Ordering::Relaxed),
             None => return,
         };
         // DashMap read-lock released here (guard dropped at end of `match`)
+
+        if prev_count == 0 {
+            // Underflow guard — shouldn't happen but AtomicUsize wraps on subtract.
+            return;
+        }
 
         if prev_count > 1 {
             tracing::debug!(
@@ -262,33 +273,32 @@ impl AcestreamSessionManager {
             return;
         }
 
-        // Last client disconnected — wait before stopping to allow quick reconnects.
-        // Players often send a short probe GET (a few seconds) before the real stream.
+        // Last client disconnected — remove the session from the map NOW so that
+        // reconnecting clients always get a fresh session (new pid).
+        let command_url = self
+            .sessions
+            .get(infohash)
+            .and_then(|s| s.command_url.clone());
+        self.sessions.remove(infohash);
+
         tracing::debug!(
-            "Acestream last client released for {infohash:.16} — grace period before stop"
+            "Acestream last client released for {infohash:.16} — session removed, engine stops in 30 s"
         );
+
         let manager = self.clone();
         let infohash_owned = infohash.to_string();
         tokio::spawn(async move {
             tokio::time::sleep(Duration::from_secs(30)).await;
-            match manager.sessions.get(&infohash_owned) {
-                Some(s) if s.client_count.load(Ordering::Relaxed) > 0 => {
-                    tracing::debug!(
-                        "Acestream grace period: client reconnected, keeping session {infohash_owned:.16}"
-                    );
-                }
-                Some(_) => {
-                    let url = manager
-                        .sessions
-                        .get(&infohash_owned)
-                        .and_then(|s| s.command_url.clone());
-                    manager.sessions.remove(&infohash_owned);
-                    tracing::info!(
-                        "Acestream stopping idle session {infohash_owned:.16} after grace period"
-                    );
-                    manager.send_stop_command(&infohash_owned, url).await;
-                }
-                None => {}
+            if manager.sessions.contains_key(&infohash_owned) {
+                // A new session was created during the grace period — it owns the engine now.
+                tracing::debug!(
+                    "Acestream grace period: new session active for {infohash_owned:.16}, skipping engine stop"
+                );
+            } else {
+                tracing::info!(
+                    "Acestream stopping idle engine for {infohash_owned:.16} after grace period"
+                );
+                manager.send_stop_command(&infohash_owned, command_url).await;
             }
         });
     }
