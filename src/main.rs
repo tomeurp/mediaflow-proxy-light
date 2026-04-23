@@ -73,6 +73,20 @@ async fn main() -> std::io::Result<()> {
         )
         .try_init()
         .expect("Failed to initialize logging");
+
+    // Loud warning when no API password is configured — silent no-auth mode is
+    // the most common footgun: any token-bearing request returns a cryptic 500
+    // rather than streaming, and operators chase ghosts.
+    if config.auth.api_password.is_empty() {
+        tracing::warn!(
+            "APP__AUTH__API_PASSWORD is not set — server is running in no-auth mode. \
+             Requests that carry an encrypted `?token=...` (or `/_token_/...` path) \
+             will be rejected with an explanatory 401, and callers must use direct \
+             `?d=<url>&h_*=...` mode. Set APP__AUTH__API_PASSWORD to enable \
+             token-based auth."
+        );
+    }
+
     let auth_middleware = AuthMiddleware::new(config.auth.api_password.clone());
     let stream_manager = StreamManager::new(config.proxy.clone());
     let server_config = Arc::new(config.clone());

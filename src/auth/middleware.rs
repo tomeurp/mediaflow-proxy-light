@@ -139,8 +139,34 @@ where
         let api_password = self.api_password.clone();
 
         Box::pin(async move {
-            // If API password is not set, allow all requests
+            // No-auth mode: operator hasn't set `APP__AUTH__API_PASSWORD`.
+            // Don't silently pass through — handlers extract ReqData<ProxyData>
+            // and hard-500 with a cryptic "Missing expected request extension
+            // data" message if we don't populate it here.
             if api_password.is_empty() {
+                let has_path_token = req.path().starts_with("/_token_");
+                let query_string = req.query_string().to_owned();
+                let query_params = AuthMiddleware::extract_query_params(&query_string);
+
+                // If the caller sent an encrypted token (path- or query-style),
+                // they expect auth but the server has none configured. Surface
+                // that as an explicit, actionable 401 so the operator spots the
+                // misconfig from the response body instead of chasing silent
+                // 500s caused by missing ProxyData in the handler extractor.
+                if has_path_token || query_params.contains_key("token") {
+                    return Err(AppError::Auth(
+                        "Server has no api_password configured but request carries an \
+                         encrypted token. Set APP__AUTH__API_PASSWORD on the server to \
+                         the same value used to mint the token."
+                            .to_string(),
+                    )
+                    .into());
+                }
+
+                // Populate ProxyData from query params (d=, h_*, r_*) so
+                // handlers have a valid destination / header map to work with.
+                let proxy_data = build_proxy_data_from_query(&query_params);
+                req.extensions_mut().insert(proxy_data);
                 return service.call(req).await;
             }
 
@@ -209,37 +235,7 @@ where
             // Check for direct API password
             if let Some(password) = query_params.get("api_password").and_then(|v| v.as_str()) {
                 if password == api_password {
-                    // Accept both "d" (canonical) and "url" (Python-proxy compat) as destination.
-                    // Endpoints like /proxy/mpd/segment have no "d=" param — use empty string so
-                    // ReqData<ProxyData> extraction never fails with a 500.
-                    let destination = query_params
-                        .get("d")
-                        .or_else(|| query_params.get("url"))
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("")
-                        .to_string();
-
-                    // Build h_* and r_* sub-maps in a single pass over query_params,
-                    // then move the full map into ProxyData (no clone).
-                    let mut request_headers = serde_json::Map::new();
-                    let mut response_headers = serde_json::Map::new();
-                    for (k, v) in &query_params {
-                        if let Some(stripped) = k.strip_prefix("h_") {
-                            request_headers.insert(stripped.to_string(), v.clone());
-                        } else if let Some(stripped) = k.strip_prefix("r_") {
-                            response_headers.insert(stripped.to_string(), v.clone());
-                        }
-                    }
-
-                    let proxy_data = ProxyData {
-                        destination,
-                        query_params: Some(Value::Object(query_params)),
-                        request_headers: Some(Value::Object(request_headers)),
-                        response_headers: Some(Value::Object(response_headers)),
-                        exp: None,
-                        ip: None,
-                    };
-
+                    let proxy_data = build_proxy_data_from_query(&query_params);
                     req.extensions_mut().insert(proxy_data);
                     return service.call(req).await;
                 }
@@ -247,5 +243,40 @@ where
 
             Err(AppError::Auth("Invalid or missing authentication".to_string()).into())
         })
+    }
+}
+
+/// Build `ProxyData` from direct query-string params (`d=` or `url=` for the
+/// destination, `h_*` for request headers, `r_*` for response headers).
+///
+/// Used by both the direct-api_password branch and the no-auth passthrough
+/// branch of the middleware. Endpoints like /proxy/mpd/segment have no `d=`
+/// param, so destination falls back to an empty string rather than panicking
+/// — `ReqData<ProxyData>` extraction never fails.
+fn build_proxy_data_from_query(query_params: &serde_json::Map<String, Value>) -> ProxyData {
+    let destination = query_params
+        .get("d")
+        .or_else(|| query_params.get("url"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+
+    let mut request_headers = serde_json::Map::new();
+    let mut response_headers = serde_json::Map::new();
+    for (k, v) in query_params {
+        if let Some(stripped) = k.strip_prefix("h_") {
+            request_headers.insert(stripped.to_string(), v.clone());
+        } else if let Some(stripped) = k.strip_prefix("r_") {
+            response_headers.insert(stripped.to_string(), v.clone());
+        }
+    }
+
+    ProxyData {
+        destination,
+        query_params: Some(Value::Object(query_params.clone())),
+        request_headers: Some(Value::Object(request_headers)),
+        response_headers: Some(Value::Object(response_headers)),
+        exp: None,
+        ip: None,
     }
 }
