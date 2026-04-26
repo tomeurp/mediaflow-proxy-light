@@ -37,10 +37,23 @@ async fn handle_proxy_request(
     proxy_data: web::ReqData<ProxyData>,
     metrics: web::Data<Arc<AppMetrics>>,
     is_head: bool,
+    destination_override: Option<String>,
 ) -> AppResult<HttpResponse> {
     // Track active connection for the lifetime of this request
     metrics.connection_open();
     let _conn_guard = ConnectionGuard(Arc::clone(&metrics));
+
+    let destination = destination_override
+        .filter(|d| !d.is_empty())
+        .unwrap_or_else(|| proxy_data.destination.clone());
+
+    if destination.is_empty() {
+        return Err(AppError::BadRequest(
+            "Missing destination URL. Provide `d=<url>` query param or an encrypted token."
+                .into(),
+        ));
+    }
+
     // Prepare headers
     let mut request_headers = HeaderMap::new();
 
@@ -77,7 +90,7 @@ async fn handle_proxy_request(
 
     // Create the stream — also get the upstream status code so we can mirror 206 etc.
     let (upstream_status, upstream_headers, stream_opt) = stream_manager
-        .create_stream(proxy_data.destination.clone(), request_headers, is_head)
+        .create_stream(destination, request_headers, is_head)
         .await?;
 
     tracing::debug!(
@@ -156,6 +169,32 @@ async fn handle_proxy_request(
     }
 }
 
+/// Resolve the effective destination URL for a proxy stream request.
+///
+/// Priority:
+/// 1. `proxy_data.destination` (from encrypted token or `d=` query param) — used as-is.
+/// 2. `d=` query param is a base64url-encoded URL — decode and use it.
+/// 3. `{filename}` path segment is a base64url-encoded URL — decode and use it.
+fn resolve_stream_destination(req: &HttpRequest, proxy_data: &ProxyData) -> Option<String> {
+    // Already set by token or plain d= param.
+    if !proxy_data.destination.is_empty() {
+        // The destination might itself be a base64-encoded URL (Aiostreams passes d=<b64>).
+        let decoded = decode_base64_url(&proxy_data.destination);
+        return Some(decoded.unwrap_or_else(|| proxy_data.destination.clone()));
+    }
+
+    // Try the {filename:.*} path segment as a base64url-encoded destination URL.
+    if let Some(filename) = req.match_info().get("filename") {
+        if !filename.is_empty() {
+            if let Some(decoded) = decode_base64_url(filename) {
+                return Some(decoded);
+            }
+        }
+    }
+
+    None
+}
+
 pub async fn proxy_stream_get(
     req: HttpRequest,
     stream_manager: web::Data<StreamManager>,
@@ -166,7 +205,8 @@ pub async fn proxy_stream_get(
     metrics
         .proxy_stream_requests
         .fetch_add(1, Ordering::Relaxed);
-    handle_proxy_request(req, stream_manager, proxy_data, metrics, false).await
+    let destination = resolve_stream_destination(&req, &proxy_data);
+    handle_proxy_request(req, stream_manager, proxy_data, metrics, false, destination).await
 }
 
 pub async fn proxy_stream_head(
@@ -179,13 +219,17 @@ pub async fn proxy_stream_head(
     metrics
         .proxy_stream_requests
         .fetch_add(1, Ordering::Relaxed);
-    handle_proxy_request(req, stream_manager, proxy_data, metrics, true).await
+    let destination = resolve_stream_destination(&req, &proxy_data);
+    handle_proxy_request(req, stream_manager, proxy_data, metrics, true, destination).await
 }
 
 /// Shared URL-building logic used by generate_url and generate_encrypted_or_encoded_url.
 ///
 /// Encrypted tokens use Python's path format: `{base}/_token_{token}{endpoint_path}`.
 /// Unencrypted tokens use flat query params matching Python's encode_mediaflow_proxy_url.
+/// When `base64_encode_destination` is true and no `api_password` is provided, the
+/// destination URL is base64url-encoded and embedded in the URL path instead of `d=`.
+#[allow(clippy::too_many_arguments)]
 pub fn build_proxy_url(
     mediaflow_proxy_url: &str,
     endpoint: Option<&str>,
@@ -200,6 +244,7 @@ pub fn build_proxy_url(
     api_password: Option<&str>,
     expiration: Option<u64>,
     ip: Option<&str>,
+    base64_encode_destination: bool,
 ) -> AppResult<String> {
     let base = mediaflow_proxy_url.trim_end_matches('/');
     let endpoint_path = endpoint
@@ -248,13 +293,23 @@ pub fn build_proxy_url(
         Ok(url)
     } else {
         // Unencrypted: flat query params matching Python's encode_mediaflow_proxy_url.
+        // When base64_encode_destination is set, embed the destination as base64url in the
+        // URL path (after the endpoint) instead of using a `d=` query parameter. This lets
+        // clients like Aiostreams construct proxy URLs without query-string bookkeeping.
         let mut url = format!("{}{}", base, endpoint_path);
-        if let Some(fname) = filename {
-            url = format!("{}/{}", url, urlencoding::encode(fname));
-        }
 
-        let mut params: Vec<(String, String)> =
-            vec![("d".to_string(), destination_url.to_string())];
+        let mut params: Vec<(String, String)> = if base64_encode_destination {
+            // Destination goes into the path; no d= param.
+            let b64 = encode_url_to_base64(destination_url);
+            url = format!("{}/{}", url, b64);
+            vec![]
+        } else {
+            // Standard: append filename (if any) then add d= query param.
+            if let Some(fname) = filename {
+                url = format!("{}/{}", url, urlencoding::encode(fname));
+            }
+            vec![("d".to_string(), destination_url.to_string())]
+        };
 
         for (k, v) in query_params {
             if !v.is_empty() {
@@ -313,13 +368,16 @@ pub fn build_proxy_url(
             params.push(("transformer".to_string(), transformer.to_string()));
         }
 
-        let qs = params
-            .iter()
-            .map(|(k, v)| format!("{}={}", k, urlencoding::encode(v)))
-            .collect::<Vec<_>>()
-            .join("&");
-
-        Ok(format!("{}?{}", url, qs))
+        if params.is_empty() {
+            Ok(url)
+        } else {
+            let qs = params
+                .iter()
+                .map(|(k, v)| format!("{}={}", k, urlencoding::encode(v)))
+                .collect::<Vec<_>>()
+                .join("&");
+            Ok(format!("{}?{}", url, qs))
+        }
     }
 }
 
@@ -350,6 +408,7 @@ pub async fn generate_url(req: web::Json<GenerateUrlRequest>) -> AppResult<HttpR
         req.api_password.as_deref(),
         req.expiration,
         req.ip.as_deref(),
+        req.base64_encode_destination,
     )?;
     Ok(HttpResponse::Ok().json(serde_json::json!({ "url": url })))
 }
@@ -406,6 +465,7 @@ pub async fn generate_encrypted_or_encoded_url(
         req.api_password.as_deref(),
         req.expiration,
         req.ip.as_deref(),
+        req.base64_encode_destination,
     )?;
     Ok(HttpResponse::Ok().json(serde_json::json!({ "encoded_url": url })))
 }
@@ -430,6 +490,8 @@ pub struct MultiUrlRequestItem {
     pub remove_response_headers: Vec<String>,
     pub stream_transformer: Option<String>,
     pub filename: Option<String>,
+    #[serde(default)]
+    pub base64_encode_destination: bool,
 }
 
 #[derive(Debug, serde::Deserialize)]
@@ -459,6 +521,7 @@ pub async fn generate_urls(req: web::Json<GenerateMultiUrlRequest>) -> AppResult
             req.api_password.as_deref(),
             req.expiration,
             req.ip.as_deref(),
+            item.base64_encode_destination,
         )?;
         encoded.push(url);
     }

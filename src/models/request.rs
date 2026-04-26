@@ -34,6 +34,10 @@ pub struct GenerateUrlRequest {
     pub expiration: Option<u64>,
     pub ip: Option<String>,
     pub api_password: Option<String>,
+    /// When true, base64url-encode the destination URL and embed it in the proxy URL path
+    /// instead of using a `d=` query parameter. Mirrors Python's `base64_encode_destination`.
+    #[serde(default)]
+    pub base64_encode_destination: bool,
 }
 
 pub const SUPPORTED_RESPONSE_HEADERS: &[&str] = &[

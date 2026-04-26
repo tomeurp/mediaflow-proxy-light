@@ -319,20 +319,32 @@ pub async fn acestream_stream_handler(
         return Ok(HttpResponse::Ok().content_type("video/mp2t").finish());
     }
 
+    // Register this client BEFORE opening the upstream connection so that a
+    // concurrent disconnect from another client cannot race and decrement the
+    // counter to zero (triggering an engine stop) while this client is still
+    // setting up.  If create_stream fails we undo the increment.
+    session_mgr.increment_client(&infohash);
+
     // Stream the live MPEG-TS response chunk-by-chunk.
     // Do NOT buffer with .bytes() — it will wait forever on a live stream.
-    let (_status, _resp_headers, stream_opt) = stream_manager
+    let stream_result = stream_manager
         .create_stream(ts_url, HeaderMap::new(), false)
         .await
-        .map_err(|e| AppError::Acestream(format!("Engine stream request failed: {e}")))?;
+        .map_err(|e| AppError::Acestream(format!("Engine stream request failed: {e}")));
 
-    let Some(raw_stream) = stream_opt else {
-        return Ok(HttpResponse::Ok().content_type("video/mp2t").finish());
+    let (_status, _resp_headers, stream_opt) = match stream_result {
+        Ok(result) => result,
+        Err(e) => {
+            // Undo the pre-increment — this client will never stream.
+            session_mgr.release_client(&infohash).await;
+            return Err(e);
+        }
     };
 
-    // Register this client. The engine session is shared across clients;
-    // stop the engine only when the last client disconnects.
-    session_mgr.increment_client(&infohash);
+    let Some(raw_stream) = stream_opt else {
+        session_mgr.release_client(&infohash).await;
+        return Ok(HttpResponse::Ok().content_type("video/mp2t").finish());
+    };
 
     let (stop_tx, stop_rx) = tokio::sync::oneshot::channel::<()>();
     let session_mgr_clone = session_mgr.clone();

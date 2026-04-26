@@ -169,6 +169,7 @@ fn encrypted_url_uses_token_path_format() {
         Some("test_secret"),
         None,
         None,
+        false,
     )
     .unwrap();
 
@@ -208,6 +209,7 @@ fn encrypted_url_token_is_valid_and_decryptable() {
         Some("test_secret"),
         None,
         None,
+        false,
     )
     .unwrap();
 
@@ -235,6 +237,7 @@ fn encrypted_url_filename_after_endpoint() {
         Some("test_secret"),
         None,
         None,
+        false,
     )
     .unwrap();
 
@@ -263,6 +266,7 @@ fn encrypted_url_expiration_in_token() {
         Some("test_secret"),
         Some(3600), // 1 hour from now
         None,
+        false,
     )
     .unwrap();
 
@@ -294,6 +298,7 @@ fn encrypted_url_ip_binding_in_token() {
         Some("test_secret"),
         None,
         Some("1.2.3.4"),
+        false,
     )
     .unwrap();
 
@@ -323,6 +328,7 @@ fn unencrypted_url_uses_query_param_style() {
         None, // no api_password
         None,
         None,
+        false,
     )
     .unwrap();
 
@@ -357,6 +363,7 @@ fn unencrypted_url_header_prefixes() {
         None,
         None,
         None,
+        false,
     )
     .unwrap();
 
@@ -394,6 +401,7 @@ fn unencrypted_url_skips_supported_request_headers() {
         None,
         None,
         None,
+        false,
     )
     .unwrap();
 
@@ -433,6 +441,7 @@ fn unencrypted_url_propagate_headers_rp_prefix() {
         None,
         None,
         None,
+        false,
     )
     .unwrap();
 
@@ -460,6 +469,7 @@ fn unencrypted_url_remove_headers_x_headers_param() {
         None,
         None,
         None,
+        false,
     )
     .unwrap();
 
@@ -489,6 +499,7 @@ fn unencrypted_url_stream_transformer_param() {
         None,
         None,
         None,
+        false,
     )
     .unwrap();
 
@@ -513,6 +524,7 @@ fn unencrypted_url_filename_in_path() {
         None,
         None,
         None,
+        false,
     )
     .unwrap();
 
