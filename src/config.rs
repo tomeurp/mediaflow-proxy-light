@@ -11,6 +11,8 @@ pub struct ServerConfig {
     pub host: String,
     pub port: u16,
     pub workers: usize,
+    #[serde(default)]
+    pub path: String,
 }
 
 #[derive(Debug, Default, Clone, Deserialize, Serialize)]
@@ -525,6 +527,7 @@ impl Config {
             .set_default("server.host", "127.0.0.1")?
             .set_default("server.port", 8888)?
             .set_default("server.workers", 4)?
+            .set_default("server.path", "")?
             // Proxy
             .set_default("proxy.connect_timeout", 30)?
             .set_default("proxy.buffer_size", 262144)?

@@ -4,6 +4,7 @@ use std::{env, fs};
 fn setup() {
     env::remove_var("APP__SERVER__HOST");
     env::remove_var("APP__SERVER__PORT");
+    env::remove_var("APP__SERVER__PATH");
     env::remove_var("APP__AUTH__API_PASSWORD");
     env::remove_var("APP__PROXY__BUFFER_SIZE");
     env::remove_var("APP__PROXY__TRANSPORT_ROUTES");
@@ -16,6 +17,7 @@ fn test_config_from_env() {
     // Set environment variables
     env::set_var("APP__SERVER__HOST", "127.0.0.1");
     env::set_var("APP__SERVER__PORT", "8888"); // Match the default port in Config
+    env::set_var("APP__SERVER__PATH", "/mediaflow/prefix");
     env::set_var("APP__AUTH__API_PASSWORD", "test_password");
     env::set_var("APP__PROXY__BUFFER_SIZE", "16384");
 
@@ -24,6 +26,7 @@ fn test_config_from_env() {
     // Assert configuration values
     assert_eq!(config.server.host, "127.0.0.1");
     assert_eq!(config.server.port, 8888); // Updated to match default port
+    assert_eq!(config.server.path, "/mediaflow/prefix");
     assert_eq!(config.auth.api_password, "test_password");
     assert_eq!(config.proxy.buffer_size, 16384);
 }

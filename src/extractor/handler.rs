@@ -18,6 +18,7 @@ use crate::{
     error::{AppError, AppResult},
     extractor::{base::ExtraParams, factory::get_extractor},
     proxy::stream::StreamManager,
+    utils::url::public_proxy_base_url,
 };
 
 pub async fn extractor_video_handler(
@@ -107,11 +108,9 @@ pub async fn extractor_video_handler(
             ));
         }
 
-        let conn = req.connection_info();
         let redirect_url = format!(
-            "{}://{}{}?{}",
-            conn.scheme(),
-            conn.host(),
+            "{}{}?{}",
+            public_proxy_base_url(&req, &config.server.path),
             proxy_path,
             params.join("&"),
         );

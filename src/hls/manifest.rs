@@ -656,6 +656,20 @@ mod tests {
     }
 
     #[test]
+    fn test_proxy_urls_preserve_public_path_prefix() {
+        let params = ProxyParams::new("pass", HashMap::new());
+        let base = "https://proxy.example.test/mediaflow/prefix";
+
+        let manifest = proxy_manifest_url(base, "https://cdn.example.com/master.m3u8", &params);
+        let segment = proxy_segment_url(base, "https://cdn.example.com/seg001.ts", &params);
+        let key = proxy_key_url(base, "https://cdn.example.com/key.bin", &params);
+
+        assert!(manifest.starts_with("https://proxy.example.test/mediaflow/prefix/proxy/hls/manifest?"));
+        assert!(segment.starts_with("https://proxy.example.test/mediaflow/prefix/proxy/hls/segment.ts?"));
+        assert!(key.starts_with("https://proxy.example.test/mediaflow/prefix/proxy/hls/segment?"));
+    }
+
+    #[test]
     fn test_process_media_playlist() {
         let processor = default_processor("http://proxy:8888");
         let m3u8 = b"#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-TARGETDURATION:10\n\

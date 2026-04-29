@@ -27,6 +27,7 @@ wget https://raw.githubusercontent.com/mhdzumair/MediaFlow-Proxy-Light/main/conf
 host    = "127.0.0.1"   # Use "0.0.0.0" for Docker or remote access
 port    = 8888
 workers = 4             # Default: 4
+path    = ""            # Public reverse-proxy path prefix, e.g. "/mediaflow/prefix"
 
 # ===========================================================================
 # Auth

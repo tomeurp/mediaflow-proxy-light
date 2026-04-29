@@ -9,6 +9,7 @@ All settings can be configured via environment variables using the `APP__<SECTIO
 | `APP__SERVER__HOST` | `127.0.0.1` | Bind address. Set to `0.0.0.0` to accept connections from all interfaces (required for Docker and remote access). |
 | `APP__SERVER__PORT` | `8888` | Listen port |
 | `APP__SERVER__WORKERS` | `4` | Number of worker threads |
+| `APP__SERVER__PATH` | *(empty)* | Public URL path prefix used when generating absolute rewritten URLs behind a reverse proxy/CDN, e.g. `/mediaflow/prefix`. |
 
 ## Auth
 

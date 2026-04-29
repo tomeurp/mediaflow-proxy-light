@@ -23,12 +23,13 @@ use crate::{
     config::Config,
     error::{AppError, AppResult},
     proxy::stream::StreamManager,
+    utils::url::public_proxy_base_url,
 };
 
 pub async fn playlist_builder_handler(
     req: HttpRequest,
     stream_manager: web::Data<StreamManager>,
-    _config: web::Data<Arc<Config>>,
+    config: web::Data<Arc<Config>>,
 ) -> AppResult<HttpResponse> {
     let query: HashMap<String, String> =
         web::Query::<HashMap<String, String>>::from_query(req.query_string())
@@ -42,20 +43,7 @@ pub async fn playlist_builder_handler(
 
     let api_password = query.get("api_password").cloned().unwrap_or_default();
 
-    let conn = req.connection_info();
-    let scheme = req
-        .headers()
-        .get("x-forwarded-proto")
-        .and_then(|v| v.to_str().ok())
-        .unwrap_or_else(|| conn.scheme())
-        .to_string();
-    let host = req
-        .headers()
-        .get("x-forwarded-host")
-        .and_then(|v| v.to_str().ok())
-        .unwrap_or_else(|| conn.host())
-        .to_string();
-    let base_url = format!("{scheme}://{host}");
+    let base_url = public_proxy_base_url(&req, &config.server.path);
 
     tracing::info!("Playlist builder: fetching {m3u_url}");
 

@@ -279,13 +279,9 @@ pub fn build_proxy_url(
 
         let token = handler.encrypt(&proxy_data)?;
 
-        // Python format: {scheme}://{authority}/_token_{token}{endpoint_path}[/{filename}]
-        // Split base URL into scheme+authority and any existing path.
-        let (scheme_authority, existing_path) = split_base_and_path(base);
-        let mut url = format!(
-            "{}/_token_{}{}{}",
-            scheme_authority, token, existing_path, endpoint_path
-        );
+        // Preserve the complete externally visible proxy base URL, including
+        // path prefixes used by reverse proxies/CDNs.
+        let mut url = format!("{}/_token_{}{}", base, token, endpoint_path);
         if let Some(fname) = filename {
             url = format!("{}/{}", url, urlencoding::encode(fname));
         }
@@ -378,18 +374,6 @@ pub fn build_proxy_url(
             Ok(format!("{}?{}", url, qs))
         }
     }
-}
-
-/// Split `"https://host/path"` → `("https://host", "/path")`.
-fn split_base_and_path(url: &str) -> (&str, &str) {
-    if let Some(scheme_end) = url.find("://") {
-        let after_scheme = &url[scheme_end + 3..];
-        if let Some(path_pos) = after_scheme.find('/') {
-            let split = scheme_end + 3 + path_pos;
-            return (&url[..split], &url[split..]);
-        }
-    }
-    (url, "")
 }
 
 pub async fn generate_url(req: web::Json<GenerateUrlRequest>) -> AppResult<HttpResponse> {

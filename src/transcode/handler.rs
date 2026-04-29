@@ -17,6 +17,7 @@ use crate::{
     error::{AppError, AppResult},
     proxy::stream::StreamManager,
     transcode::pipeline::{transcode_url, OutputFormat, TranscodeOptions},
+    utils::url::public_proxy_base_url,
 };
 
 // ---------------------------------------------------------------------------
@@ -126,7 +127,7 @@ pub async fn transcode_hls_init_handler(
 /// Return a simple HLS VOD playlist for a transcoded stream.
 pub async fn transcode_hls_playlist_handler(
     req: HttpRequest,
-    _config: web::Data<Arc<Config>>,
+    config: web::Data<Arc<Config>>,
 ) -> AppResult<HttpResponse> {
     let query: HashMap<String, String> =
         web::Query::<HashMap<String, String>>::from_query(req.query_string())
@@ -139,8 +140,7 @@ pub async fn transcode_hls_playlist_handler(
         .ok_or_else(|| AppError::BadRequest("Missing d param".into()))?;
     let api_password = query.get("api_password").cloned().unwrap_or_default();
 
-    let conn = req.connection_info();
-    let base_url = format!("{}://{}", conn.scheme(), conn.host());
+    let base_url = public_proxy_base_url(&req, &config.server.path);
 
     let mut params = format!("d={}", url_encode(&source_url));
     // Forward h_* headers.

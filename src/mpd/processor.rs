@@ -1300,6 +1300,54 @@ fn build_init_url(
     url
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn params() -> MpdProxyParams {
+        MpdProxyParams {
+            api_password: "pass".to_string(),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn mpd_urls_preserve_public_path_prefix() {
+        let base = "https://proxy.example.test/mediaflow/prefix";
+        let params = params();
+
+        let playlist = build_playlist_url(
+            base,
+            "https://cdn.example.test/manifest.mpd",
+            "video_1080",
+            &params,
+        );
+        let segment = build_segment_url(
+            base,
+            "https://cdn.example.test/init.mp4",
+            "https://cdn.example.test/seg-1.m4s",
+            "video/mp4",
+            false,
+            false,
+            None,
+            None,
+            None,
+            &params,
+        );
+        let init = build_init_url(
+            base,
+            "https://cdn.example.test/init.mp4",
+            "video/mp4",
+            None,
+            &params,
+        );
+
+        assert!(playlist.starts_with("https://proxy.example.test/mediaflow/prefix/proxy/mpd/playlist?"));
+        assert!(segment.starts_with("https://proxy.example.test/mediaflow/prefix/proxy/mpd/segment.mp4?"));
+        assert!(init.starts_with("https://proxy.example.test/mediaflow/prefix/proxy/mpd/init?"));
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------

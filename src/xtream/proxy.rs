@@ -10,6 +10,7 @@ use reqwest::header::HeaderMap;
 use crate::{
     error::{AppError, AppResult},
     proxy::stream::StreamManager,
+    utils::url::public_proxy_base_url,
     xtream::auth::encode_username_token,
 };
 
@@ -25,6 +26,7 @@ pub async fn forward_api_request(
     upstream_base: &str,
     actual_username: &str,
     api_password: Option<&str>,
+    public_path: &str,
 ) -> AppResult<(Vec<u8>, String)> {
     let raw = stream_manager
         .fetch_bytes(upstream_url.to_string(), HeaderMap::new())
@@ -42,7 +44,7 @@ pub async fn forward_api_request(
     };
 
     // Only rewrite JSON bodies.
-    let mediaflow_base = proxy_base_url(req);
+    let mediaflow_base = proxy_base_url(req, public_path);
     let rewritten = rewrite_urls_for_api(
         body_str,
         upstream_base,
@@ -55,22 +57,8 @@ pub async fn forward_api_request(
 }
 
 /// Get the public-facing base URL of this MediaFlow instance.
-pub fn proxy_base_url(req: &HttpRequest) -> String {
-    let conn = req.connection_info();
-    // Prefer X-Forwarded-Proto / X-Forwarded-Host if behind a reverse proxy.
-    let scheme = req
-        .headers()
-        .get("x-forwarded-proto")
-        .and_then(|v| v.to_str().ok())
-        .unwrap_or_else(|| conn.scheme())
-        .to_string();
-    let host = req
-        .headers()
-        .get("x-forwarded-host")
-        .and_then(|v| v.to_str().ok())
-        .unwrap_or_else(|| conn.host())
-        .to_string();
-    format!("{scheme}://{host}")
+pub fn proxy_base_url(req: &HttpRequest, public_path: &str) -> String {
+    public_proxy_base_url(req, public_path)
 }
 
 // ---------------------------------------------------------------------------

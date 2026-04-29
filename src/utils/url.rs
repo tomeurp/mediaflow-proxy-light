@@ -1,4 +1,5 @@
 /// URL joining and manipulation utilities.
+use actix_web::HttpRequest;
 use url::Url;
 
 /// Join a potentially relative `path` against an absolute `base_url`.
@@ -60,6 +61,38 @@ pub fn scheme_and_authority(url: &str) -> Option<(String, String)> {
     Some((scheme, authority))
 }
 
+/// Normalize a public path prefix from config/env.
+///
+/// Empty, `/`, and whitespace-only values mean no prefix. Non-empty values are
+/// returned with one leading slash and no trailing slash.
+pub fn normalize_public_path(path: &str) -> String {
+    let trimmed = path.trim().trim_matches('/');
+    if trimmed.is_empty() {
+        String::new()
+    } else {
+        format!("/{trimmed}")
+    }
+}
+
+/// Build the public-facing base URL used by manifest and API rewriters.
+///
+/// This keeps reverse-proxy path prefixes explicit via `APP__SERVER__PATH`,
+/// while still respecting forwarded host/proto headers when present.
+pub fn public_proxy_base_url(req: &HttpRequest, public_path: &str) -> String {
+    let conn = req.connection_info();
+    let scheme = req
+        .headers()
+        .get("x-forwarded-proto")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or_else(|| conn.scheme());
+    let host = req
+        .headers()
+        .get("x-forwarded-host")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or_else(|| conn.host());
+    format!("{scheme}://{host}{}", normalize_public_path(public_path))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -90,5 +123,13 @@ mod tests {
             "m4s"
         );
         assert_eq!(segment_extension("https://cdn.example.com/init.mp4"), "mp4");
+    }
+
+    #[test]
+    fn test_normalize_public_path() {
+        assert_eq!(normalize_public_path(""), "");
+        assert_eq!(normalize_public_path("/"), "");
+        assert_eq!(normalize_public_path("mediaflow/prefix"), "/mediaflow/prefix");
+        assert_eq!(normalize_public_path("/mediaflow/prefix/"), "/mediaflow/prefix");
     }
 }
