@@ -825,9 +825,7 @@ mod middleware_tests {
         extra.insert("redirect_stream".to_string(), serde_json::json!("true"));
         let pd = ProxyData {
             destination: "https://example.com/page.html".into(),
-            query_params: Some(serde_json::Value::Object(
-                extra.into_iter().collect(),
-            )),
+            query_params: Some(serde_json::Value::Object(extra.into_iter().collect())),
             request_headers: None,
             response_headers: None,
             exp: None,
@@ -842,10 +840,7 @@ mod middleware_tests {
         let app = test::init_service(
             App::new()
                 .wrap(AuthMiddleware::new("secret".into()))
-                .service(
-                    web::scope("/extractor")
-                        .route("/video", web::get().to(echo_query)),
-                ),
+                .service(web::scope("/extractor").route("/video", web::get().to(echo_query))),
         )
         .await;
 
@@ -855,8 +850,14 @@ mod middleware_tests {
         let resp = test::call_service(&app, req).await;
         assert_eq!(resp.status(), 200);
         let body = String::from_utf8(test::read_body(resp).await.to_vec()).unwrap();
-        assert!(body.contains("host=TestHost"), "host param must be in query string, got: {body}");
-        assert!(body.contains("d=https"), "destination must appear as d= param, got: {body}");
+        assert!(
+            body.contains("host=TestHost"),
+            "host param must be in query string, got: {body}"
+        );
+        assert!(
+            body.contains("d=https"),
+            "destination must appear as d= param, got: {body}"
+        );
     }
 
     /// After middleware rewrites /_token_{t}/proxy/stream → /proxy/stream,
@@ -896,8 +897,7 @@ mod middleware_tests {
         );
         let body = test::read_body(resp).await;
         assert_eq!(
-            body,
-            "https://cdn.example.com/stream.m3u8",
+            body, "https://cdn.example.com/stream.m3u8",
             "ProxyData.destination must flow through to the handler"
         );
     }
