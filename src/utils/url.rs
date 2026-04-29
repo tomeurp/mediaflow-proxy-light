@@ -129,7 +129,13 @@ mod tests {
     fn test_normalize_public_path() {
         assert_eq!(normalize_public_path(""), "");
         assert_eq!(normalize_public_path("/"), "");
-        assert_eq!(normalize_public_path("mediaflow/prefix"), "/mediaflow/prefix");
-        assert_eq!(normalize_public_path("/mediaflow/prefix/"), "/mediaflow/prefix");
+        assert_eq!(
+            normalize_public_path("mediaflow/prefix"),
+            "/mediaflow/prefix"
+        );
+        assert_eq!(
+            normalize_public_path("/mediaflow/prefix/"),
+            "/mediaflow/prefix"
+        );
     }
 }

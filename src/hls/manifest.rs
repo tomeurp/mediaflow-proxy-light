@@ -664,8 +664,11 @@ mod tests {
         let segment = proxy_segment_url(base, "https://cdn.example.com/seg001.ts", &params);
         let key = proxy_key_url(base, "https://cdn.example.com/key.bin", &params);
 
-        assert!(manifest.starts_with("https://proxy.example.test/mediaflow/prefix/proxy/hls/manifest?"));
-        assert!(segment.starts_with("https://proxy.example.test/mediaflow/prefix/proxy/hls/segment.ts?"));
+        assert!(
+            manifest.starts_with("https://proxy.example.test/mediaflow/prefix/proxy/hls/manifest?")
+        );
+        assert!(segment
+            .starts_with("https://proxy.example.test/mediaflow/prefix/proxy/hls/segment.ts?"));
         assert!(key.starts_with("https://proxy.example.test/mediaflow/prefix/proxy/hls/segment?"));
     }
 

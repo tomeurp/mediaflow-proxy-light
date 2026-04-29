@@ -1342,8 +1342,11 @@ mod tests {
             &params,
         );
 
-        assert!(playlist.starts_with("https://proxy.example.test/mediaflow/prefix/proxy/mpd/playlist?"));
-        assert!(segment.starts_with("https://proxy.example.test/mediaflow/prefix/proxy/mpd/segment.mp4?"));
+        assert!(
+            playlist.starts_with("https://proxy.example.test/mediaflow/prefix/proxy/mpd/playlist?")
+        );
+        assert!(segment
+            .starts_with("https://proxy.example.test/mediaflow/prefix/proxy/mpd/segment.mp4?"));
         assert!(init.starts_with("https://proxy.example.test/mediaflow/prefix/proxy/mpd/init?"));
     }
 }
