@@ -811,4 +811,94 @@ mod middleware_tests {
         let wrong = EncryptionHandler::new(b"wrong_password").unwrap();
         assert!(wrong.decrypt(tok, None).is_err());
     }
+
+    /// Decrypted query_params (e.g. host=, redirect_stream=) must be injected
+    /// back into the request's query string so handlers can read them via
+    /// req.query_string() — mirrors Python proxy behaviour for /extractor/video.
+    #[actix_web::test]
+    async fn token_query_params_injected_into_query_string() {
+        use mediaflow_proxy_light::auth::encryption::ProxyData;
+
+        let h = EncryptionHandler::new(b"secret").unwrap();
+        let mut extra = std::collections::HashMap::new();
+        extra.insert("host".to_string(), serde_json::json!("TestHost"));
+        extra.insert("redirect_stream".to_string(), serde_json::json!("true"));
+        let pd = ProxyData {
+            destination: "https://example.com/page.html".into(),
+            query_params: Some(serde_json::Value::Object(
+                extra.into_iter().collect(),
+            )),
+            request_headers: None,
+            response_headers: None,
+            exp: None,
+            ip: None,
+        };
+        let token = h.encrypt(&pd).unwrap();
+
+        async fn echo_query(req: HttpRequest) -> HttpResponse {
+            HttpResponse::Ok().body(req.query_string().to_string())
+        }
+
+        let app = test::init_service(
+            App::new()
+                .wrap(AuthMiddleware::new("secret".into()))
+                .service(
+                    web::scope("/extractor")
+                        .route("/video", web::get().to(echo_query)),
+                ),
+        )
+        .await;
+
+        let req = test::TestRequest::get()
+            .uri(&format!("/_token_{}/extractor/video", token))
+            .to_request();
+        let resp = test::call_service(&app, req).await;
+        assert_eq!(resp.status(), 200);
+        let body = String::from_utf8(test::read_body(resp).await.to_vec()).unwrap();
+        assert!(body.contains("host=TestHost"), "host param must be in query string, got: {body}");
+        assert!(body.contains("d=https"), "destination must appear as d= param, got: {body}");
+    }
+
+    /// After middleware rewrites /_token_{t}/proxy/stream → /proxy/stream,
+    /// the actix-web router must still match the /proxy scope's /stream route.
+    /// This guards against the 404 regression where URI rewriting worked but
+    /// the scoped route wasn't reached.
+    #[actix_web::test]
+    async fn token_path_routes_to_proxy_stream_scope() {
+        use actix_web::web::ReqData;
+        use mediaflow_proxy_light::auth::encryption::ProxyData;
+
+        let token = make_token("secret", "https://cdn.example.com/stream.m3u8");
+
+        async fn proxy_stream_stub(proxy_data: ReqData<ProxyData>) -> HttpResponse {
+            HttpResponse::Ok().body(proxy_data.destination.clone())
+        }
+
+        let app = test::init_service(
+            App::new()
+                .wrap(AuthMiddleware::new("secret".into()))
+                .service(
+                    web::scope("/proxy")
+                        .route("/stream", web::get().to(proxy_stream_stub))
+                        .route("/stream/{filename:.*}", web::get().to(proxy_stream_stub)),
+                ),
+        )
+        .await;
+
+        let req = test::TestRequest::get()
+            .uri(&format!("/_token_{}/proxy/stream", token))
+            .to_request();
+        let resp = test::call_service(&app, req).await;
+        assert_eq!(
+            resp.status(),
+            200,
+            "/_token_/proxy/stream must route to the /proxy scope handler, not 404"
+        );
+        let body = test::read_body(resp).await;
+        assert_eq!(
+            body,
+            "https://cdn.example.com/stream.m3u8",
+            "ProxyData.destination must flow through to the handler"
+        );
+    }
 }

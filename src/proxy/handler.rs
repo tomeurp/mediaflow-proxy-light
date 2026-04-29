@@ -503,6 +503,7 @@ pub struct GenerateMultiUrlRequest {
 }
 
 pub async fn generate_urls(req: web::Json<GenerateMultiUrlRequest>) -> AppResult<HttpResponse> {
+    let effective_password = req.api_password.as_deref().filter(|p| !p.is_empty());
     let mut encoded: Vec<String> = Vec::with_capacity(req.urls.len());
 
     for item in &req.urls {
@@ -517,7 +518,7 @@ pub async fn generate_urls(req: web::Json<GenerateMultiUrlRequest>) -> AppResult
             &item.remove_response_headers,
             item.stream_transformer.as_deref(),
             item.filename.as_deref(),
-            req.api_password.as_deref(),
+            effective_password,
             req.expiration,
             req.ip.as_deref(),
             item.base64_encode_destination,
