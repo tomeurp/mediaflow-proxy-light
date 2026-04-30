@@ -635,11 +635,33 @@ fn normalize_server_path(path: &str) -> Result<String, config::ConfigError> {
         ));
     }
 
-    let trimmed = path.trim();
-    if trimmed.is_empty() || trimmed == "/" {
+    let collapsed = path
+        .split('/')
+        .filter(|segment| !segment.is_empty())
+        .collect::<Vec<_>>();
+    if collapsed.is_empty() {
         return Ok(String::new());
     }
 
-    let normalized = format!("/{}", trimmed.trim_matches('/'));
+    let normalized = format!("/{}", collapsed.join("/"));
     Ok(normalized)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::normalize_server_path;
+
+    #[test]
+    fn normalize_server_path_collapses_repeated_slashes() {
+        assert_eq!(
+            normalize_server_path("/foo//bar///baz").unwrap(),
+            "/foo/bar/baz"
+        );
+        assert_eq!(normalize_server_path("////").unwrap(), "");
+    }
+
+    #[test]
+    fn normalize_server_path_rejects_whitespace() {
+        assert!(normalize_server_path(" /mediaflow ").is_err());
+    }
 }

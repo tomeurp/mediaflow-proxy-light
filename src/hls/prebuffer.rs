@@ -205,11 +205,12 @@ impl HlsPrebuffer {
                 }
 
                 let (urls_to_fetch, headers) = prefetcher.pop_batch_with_headers(ahead).await;
+                let headers = Arc::new(headers);
 
                 if !urls_to_fetch.is_empty() {
                     let mut fetches = Vec::with_capacity(urls_to_fetch.len());
                     for url in urls_to_fetch {
-                        let cache_key = segment_cache_key(&url, &headers);
+                        let cache_key = segment_cache_key(&url, headers.as_ref());
                         if cache.get(&cache_key).await.is_some() {
                             continue;
                         }
@@ -290,10 +291,10 @@ async fn fetch_segment(
     client: reqwest::Client,
     url: String,
     cache_key: String,
-    headers: HashMap<String, String>,
+    headers: Arc<HashMap<String, String>>,
 ) -> Option<(String, Bytes)> {
     let mut req = client.get(&url);
-    for (k, v) in headers {
+    for (k, v) in headers.iter() {
         req = req.header(k.as_str(), v.as_str());
     }
 
@@ -516,7 +517,7 @@ mod tests {
             "#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-TARGETDURATION:4\n#EXT-X-MEDIA-SEQUENCE:0\n",
         );
         for idx in 0..SEGMENT_COUNT {
-            variant.push_str(&format!("#EXTINF:4,\nsegments/seg{idx:03}.ts\n"));
+            variant.push_str(&format!("#EXTINF:4.000,\nsegments/seg{idx:03}.ts\n"));
         }
         variant.push_str("#EXT-X-ENDLIST\n");
 

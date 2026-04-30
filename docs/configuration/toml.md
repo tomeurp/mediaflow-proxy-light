@@ -177,8 +177,9 @@ and no trailing slash.
 
 ```nginx
 location /mediaflow/ {
-    proxy_pass http://127.0.0.1:8888/;
+    proxy_pass http://127.0.0.1:8888/;  # trailing "/" strips the /mediaflow/ prefix
     proxy_set_header Host $host;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
     proxy_set_header X-Forwarded-Host $http_host;
     proxy_set_header X-Forwarded-Proto $scheme;
 }
@@ -190,6 +191,9 @@ For that proxy location, configure:
 [server]
 path = "/mediaflow"
 ```
+
+Omit the trailing slash in `proxy_pass` only if you intentionally want Nginx to
+forward the `/mediaflow/...` prefix upstream as part of the request path.
 
 ---
 

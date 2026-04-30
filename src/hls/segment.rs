@@ -178,13 +178,15 @@ fn apply_custom_headers(
     custom: &Option<serde_json::Value>,
 ) {
     if let Some(custom) = custom {
-        for (k, v) in custom.as_object().unwrap_or(&serde_json::Map::new()) {
-            if let Some(v_str) = v.as_str() {
-                if let (Ok(name), Ok(val)) = (
-                    actix_web::http::header::HeaderName::from_str(k),
-                    actix_web::http::header::HeaderValue::from_str(v_str),
-                ) {
-                    resp.insert_header((name, val));
+        if let Some(map) = custom.as_object() {
+            for (k, v) in map {
+                if let Some(v_str) = v.as_str() {
+                    if let (Ok(name), Ok(val)) = (
+                        actix_web::http::header::HeaderName::from_str(k),
+                        actix_web::http::header::HeaderValue::from_str(v_str),
+                    ) {
+                        resp.insert_header((name, val));
+                    }
                 }
             }
         }

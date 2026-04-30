@@ -278,4 +278,34 @@ mod tests {
             "http://localhost:8080/mediaflow"
         );
     }
+
+    #[test]
+    fn test_sanitize_forwarded_host_ipv6_and_port_boundaries() {
+        assert_eq!(sanitize_forwarded_host("[::1]:8080"), Some("[::1]:8080"));
+        assert_eq!(
+            sanitize_forwarded_host("[2001:db8::1]"),
+            Some("[2001:db8::1]")
+        );
+        assert_eq!(sanitize_forwarded_host("[::1"), None);
+        assert_eq!(sanitize_forwarded_host("localhost:0"), Some("localhost:0"));
+        assert_eq!(
+            sanitize_forwarded_host("localhost:65535"),
+            Some("localhost:65535")
+        );
+        assert_eq!(sanitize_forwarded_host("localhost:65536"), None);
+    }
+
+    #[test]
+    fn test_public_proxy_base_url_accepts_ipv6_forwarded_host() {
+        let req = actix_web::test::TestRequest::with_uri("http://localhost/test")
+            .insert_header(("host", "localhost"))
+            .insert_header(("x-forwarded-proto", "https"))
+            .insert_header(("x-forwarded-host", "[::1]:8080"))
+            .to_http_request();
+
+        assert_eq!(
+            public_proxy_base_url(&req, "/mediaflow"),
+            "https://[::1]:8080/mediaflow"
+        );
+    }
 }
