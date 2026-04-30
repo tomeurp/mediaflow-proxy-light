@@ -20,7 +20,7 @@ fn handler() -> EncryptionHandler {
 
 /// Extract the token from a `/_token_{token}/…` or `?token={token}` URL.
 fn extract_token_from_url(url: &str) -> &str {
-    if let Some(rest) = url.strip_prefix("https://proxy.example.com/_token_") {
+    if let Some((_, rest)) = url.split_once("/_token_") {
         let end = rest.find('/').unwrap_or(rest.len());
         &rest[..end]
     } else if let Some(pos) = url.find("?token=") {
@@ -28,6 +28,37 @@ fn extract_token_from_url(url: &str) -> &str {
     } else {
         panic!("no token found in URL: {url}");
     }
+}
+
+/// Encrypted URLs must preserve path prefixes in the externally visible proxy URL.
+#[test]
+fn encrypted_url_preserves_proxy_base_path() {
+    let url = build_proxy_url(
+        "https://proxy.example.test/custom/prefix/",
+        Some("/proxy/hls/manifest.m3u8"),
+        "https://origin.example.test/live/playlist.m3u8",
+        &default_headers(),
+        &default_headers(),
+        &default_headers(),
+        &default_headers(),
+        &[],
+        None,
+        None,
+        Some("test_secret"),
+        None,
+        None,
+        false,
+    )
+    .unwrap();
+
+    assert!(
+        url.starts_with("https://proxy.example.test/custom/prefix/_token_"),
+        "encrypted URL must keep the complete proxy base path, got: {url}"
+    );
+    assert!(
+        url.ends_with("/proxy/hls/manifest.m3u8"),
+        "endpoint must follow token and preserved base path, got: {url}"
+    );
 }
 
 /// Parse `key=value` pairs from a URL query string (percent-decoded, `+`→space).

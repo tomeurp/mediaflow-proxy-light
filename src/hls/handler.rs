@@ -16,15 +16,8 @@ use crate::{
     },
     metrics::AppMetrics,
     proxy::stream::StreamManager,
+    utils::url::public_proxy_base_url,
 };
-
-/// Extract the proxy base URL from an incoming request (scheme + host + port).
-fn proxy_base_url(req: &HttpRequest) -> String {
-    let conn = req.connection_info();
-    let scheme = conn.scheme().to_string();
-    let host = conn.host().to_string();
-    format!("{}://{}", scheme, host)
-}
 
 /// Extract passthrough params from `proxy_data`:
 /// - `api_password` from query params inside `proxy_data.query_params`
@@ -61,7 +54,7 @@ pub async fn hls_manifest_handler(
     metrics.inc_request();
     metrics.hls_requests.fetch_add(1, Ordering::Relaxed);
     let destination = proxy_data.destination.clone();
-    let proxy_base = proxy_base_url(&req);
+    let proxy_base = public_proxy_base_url(&req, &config.server.path);
     let params = extract_proxy_params(&proxy_data, &config);
 
     // Extract manifest-processing options from query params

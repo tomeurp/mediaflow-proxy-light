@@ -6,6 +6,7 @@
 host = "0.0.0.0"
 port = 8888
 workers = 4  # Number of worker threads (defaults to number of CPU cores)
+path = ""    # Public URL path prefix behind reverse proxies, e.g. "/mediaflow/prefix"
 
 [proxy]
 connect_timeout = 30    # TCP handshake timeout (seconds)

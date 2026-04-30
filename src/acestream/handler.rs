@@ -28,6 +28,7 @@ use crate::{
     config::Config,
     error::{AppError, AppResult},
     proxy::stream::StreamManager,
+    utils::url::public_proxy_base_url,
 };
 
 use super::session::AcestreamSessionManager;
@@ -109,20 +110,7 @@ pub async fn acestream_manifest_handler(
 
     let api_password = query.get("api_password").cloned().unwrap_or_default();
 
-    let conn = req.connection_info();
-    let scheme = req
-        .headers()
-        .get("x-forwarded-proto")
-        .and_then(|v| v.to_str().ok())
-        .unwrap_or_else(|| conn.scheme())
-        .to_string();
-    let host = req
-        .headers()
-        .get("x-forwarded-host")
-        .and_then(|v| v.to_str().ok())
-        .unwrap_or_else(|| conn.host())
-        .to_string();
-    let base_url = format!("{scheme}://{host}");
+    let base_url = public_proxy_base_url(&req, &config.server.path);
 
     tracing::info!("Acestream manifest: infohash={infohash}");
 
@@ -265,20 +253,7 @@ pub async fn acestream_stream_handler(
                 .finish());
         }
 
-        let conn = req.connection_info();
-        let scheme = req
-            .headers()
-            .get("x-forwarded-proto")
-            .and_then(|v| v.to_str().ok())
-            .unwrap_or_else(|| conn.scheme())
-            .to_string();
-        let host = req
-            .headers()
-            .get("x-forwarded-host")
-            .and_then(|v| v.to_str().ok())
-            .unwrap_or_else(|| conn.host())
-            .to_string();
-        let base_url = format!("{scheme}://{host}");
+        let base_url = public_proxy_base_url(&req, &config.server.path);
         let api_password = query.get("api_password").cloned().unwrap_or_default();
 
         tracing::debug!("Acestream free mode manifest URL: {}", session.playback_url);

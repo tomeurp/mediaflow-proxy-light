@@ -29,16 +29,8 @@ use crate::{
         },
     },
     proxy::stream::StreamManager,
+    utils::url::public_proxy_base_url,
 };
-
-// ---------------------------------------------------------------------------
-// Helper: extract the proxy base URL from the request
-// ---------------------------------------------------------------------------
-
-fn proxy_base_url(req: &HttpRequest) -> String {
-    let conn = req.connection_info();
-    format!("{}://{}", conn.scheme(), conn.host())
-}
 
 // ---------------------------------------------------------------------------
 // Helper: build a HeaderMap from the h_* pass-headers in ProxyData
@@ -221,7 +213,7 @@ pub async fn mpd_manifest_handler(
     metrics.inc_request();
     metrics.mpd_requests.fetch_add(1, Ordering::Relaxed);
     let destination = proxy_data.destination.clone();
-    let proxy_base = proxy_base_url(&req);
+    let proxy_base = public_proxy_base_url(&req, &config.server.path);
     let query: HashMap<String, String> =
         web::Query::<HashMap<String, String>>::from_query(req.query_string())
             .map(|q| q.into_inner())
@@ -268,7 +260,7 @@ pub async fn mpd_playlist_handler(
     metrics.inc_request();
     metrics.mpd_requests.fetch_add(1, Ordering::Relaxed);
     let destination = proxy_data.destination.clone();
-    let proxy_base = proxy_base_url(&req);
+    let proxy_base = public_proxy_base_url(&req, &config.server.path);
     let query: HashMap<String, String> =
         web::Query::<HashMap<String, String>>::from_query(req.query_string())
             .map(|q| q.into_inner())

@@ -101,6 +101,7 @@ pub async fn player_api_handler(
         &creds.upstream_base,
         &creds.actual_username,
         creds.api_password.as_deref(),
+        &config.server.path,
     )
     .await?;
 
@@ -200,7 +201,7 @@ pub async fn get_playlist_handler(
     let qs = build_query_string(&params);
     let upstream_url = format!("{}get.php?{qs}", creds.upstream_base);
 
-    let mediaflow_base = proxy_base_url(&req);
+    let mediaflow_base = proxy_base_url(&req, &config.server.path);
     let mut hls_params = format!("d={}", url_encode(&upstream_url));
     if let Some(ref pwd) = creds.api_password {
         hls_params.push_str(&format!("&api_password={}", url_encode(pwd)));
@@ -259,6 +260,7 @@ pub async fn panel_api_handler(
         &creds.upstream_base,
         &creds.actual_username,
         creds.api_password.as_deref(),
+        &config.server.path,
     )
     .await?;
 
@@ -296,7 +298,7 @@ pub async fn live_stream_handler(
 
     // m3u8 → redirect to HLS proxy.
     if ext == "m3u8" || ext == "m3u" {
-        let mediaflow_base = proxy_base_url(&req);
+        let mediaflow_base = proxy_base_url(&req, &config.server.path);
         let mut hls_params = format!("d={}", url_encode(&upstream_url));
         if let Some(ref pwd) = creds.api_password {
             hls_params.push_str(&format!("&api_password={}", url_encode(pwd)));
