@@ -259,6 +259,12 @@ impl HlsPrebuffer {
         self.worker_starts
             .load(std::sync::atomic::Ordering::Relaxed)
     }
+
+    #[cfg(test)]
+    pub async fn queue_snapshot(&self, playlist_url: &str) -> Option<Vec<String>> {
+        let entry = self.prefetchers.get(playlist_url)?;
+        Some(entry.queue_snapshot().await)
+    }
 }
 
 pub fn segment_cache_key(url: &str, headers: &HashMap<String, String>) -> String {

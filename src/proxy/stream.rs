@@ -274,9 +274,22 @@ impl StreamManager {
         url: String,
         headers: reqwest::header::HeaderMap,
     ) -> AppResult<bytes::Bytes> {
+        self.fetch_bytes_with_final_url(url, headers)
+            .await
+            .map(|(bytes, _)| bytes)
+    }
+
+    /// Fetch all response bytes into memory and also return the effective
+    /// response URL after reqwest has followed redirects.
+    pub async fn fetch_bytes_with_final_url(
+        &self,
+        url: String,
+        headers: reqwest::header::HeaderMap,
+    ) -> AppResult<(bytes::Bytes, String)> {
         let body_timeout = Duration::from_secs(self.config.body_read_timeout);
         let response = self.make_request(url, headers).await?;
-        timeout(body_timeout, response.bytes())
+        let final_url = response.url().to_string();
+        let bytes = timeout(body_timeout, response.bytes())
             .await
             .map_err(|_| {
                 AppError::Proxy(format!(
@@ -284,7 +297,9 @@ impl StreamManager {
                     self.config.body_read_timeout
                 ))
             })?
-            .map_err(|e| AppError::Proxy(format!("Failed to read response body: {}", e)))
+            .map_err(|e| AppError::Proxy(format!("Failed to read response body: {}", e)))?;
+
+        Ok((bytes, final_url))
     }
 
     pub async fn create_stream(
