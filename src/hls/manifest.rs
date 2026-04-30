@@ -54,6 +54,12 @@ pub fn proxy_segment_url(proxy_base: &str, destination: &str, params: &ProxyPara
             urlencoding::encode(&params.api_password)
         ));
     }
+    if let Some(playlist_url) = &params.playlist_url {
+        qs.push_str(&format!(
+            "&playlist_url={}",
+            urlencoding::encode(playlist_url)
+        ));
+    }
     for (k, v) in &params.pass_headers {
         // Skip `range` for segments — each segment manages its own range
         if k.eq_ignore_ascii_case("range") {
@@ -109,6 +115,8 @@ pub struct ProxyParams {
     pub api_password: String,
     /// `h_*` request headers to re-attach to proxied URLs.
     pub pass_headers: HashMap<String, String>,
+    /// Upstream media playlist URL that produced segment proxy URLs.
+    pub playlist_url: Option<String>,
 }
 
 impl ProxyParams {
@@ -116,7 +124,13 @@ impl ProxyParams {
         Self {
             api_password: api_password.to_string(),
             pass_headers,
+            playlist_url: None,
         }
+    }
+
+    pub fn with_playlist_url(mut self, playlist_url: &str) -> Self {
+        self.playlist_url = Some(playlist_url.to_string());
+        self
     }
 }
 
@@ -173,6 +187,47 @@ impl ManifestProcessor {
                 self.process_lines(std::str::from_utf8(content).unwrap_or_default(), source_url)
             }
         }
+    }
+
+    /// Extract absolute media segment URLs from an upstream media playlist.
+    pub fn media_segment_urls(content: &[u8], source_url: &str) -> Vec<String> {
+        match m3u8_rs::parse_playlist_res(content) {
+            Ok(Playlist::MediaPlaylist(pl)) => pl
+                .segments
+                .iter()
+                .map(|seg| resolve_url(source_url, &seg.uri))
+                .filter(|url| !is_playlist_url(url))
+                .collect(),
+            Ok(Playlist::MasterPlaylist(_)) => Vec::new(),
+            Err(_) => Self::media_segment_urls_from_lines(
+                std::str::from_utf8(content).unwrap_or_default(),
+                source_url,
+            ),
+        }
+    }
+
+    fn media_segment_urls_from_lines(content: &str, source_url: &str) -> Vec<String> {
+        let mut urls = Vec::new();
+        let mut pending_extinf = false;
+
+        for line in content.lines().map(str::trim) {
+            if line.starts_with("#EXTINF:") {
+                pending_extinf = true;
+                continue;
+            }
+            if line.is_empty() || line.starts_with('#') {
+                continue;
+            }
+            if pending_extinf {
+                let resolved = resolve_url(source_url, line);
+                if !is_playlist_url(&resolved) {
+                    urls.push(resolved);
+                }
+                pending_extinf = false;
+            }
+        }
+
+        urls
     }
 
     // -----------------------------------------------------------------------
@@ -428,7 +483,7 @@ impl ManifestProcessor {
         let abs = resolve_url(base_url, uri);
 
         // Sub-playlists (e.g. variant streams embedded in a media playlist)
-        if abs.contains(".m3u8") || abs.contains(".m3u") {
+        if is_playlist_url(&abs) {
             return proxy_manifest_url(&self.proxy_base, &abs, &self.params);
         }
 
@@ -587,6 +642,12 @@ fn parse_extinf_duration(line: &str) -> f64 {
         .unwrap_or(0.0)
 }
 
+fn is_playlist_url(url: &str) -> bool {
+    let path = url.split(['?', '#']).next().unwrap_or(url);
+    let lower = path.to_ascii_lowercase();
+    lower.ends_with(".m3u8") || lower.ends_with(".m3u")
+}
+
 /// Inject `#EXT-X-START:TIME-OFFSET=<offset>,PRECISE=YES` right after `#EXTM3U`.
 fn inject_ext_x_start(content: &str, offset: f64) -> String {
     if let Some(pos) = content.find("#EXTM3U") {
@@ -645,6 +706,20 @@ mod tests {
     }
 
     #[test]
+    fn test_proxy_segment_url_includes_playlist_url() {
+        let params = ProxyParams::new("pass", HashMap::new())
+            .with_playlist_url("https://cdn.example.com/live.m3u8");
+        let url = proxy_segment_url(
+            "http://proxy:8888",
+            "https://cdn.example.com/seg001.ts",
+            &params,
+        );
+
+        assert!(url.contains("playlist_url=https"));
+        assert!(url.contains("live.m3u8"));
+    }
+
+    #[test]
     fn test_proxy_manifest_url() {
         let params = ProxyParams::new("pass", HashMap::new());
         let url = proxy_manifest_url(
@@ -698,6 +773,30 @@ mod tests {
 
         // Variant stream URLs should be rewritten as manifest proxy URLs
         assert!(result.contains("/proxy/hls/manifest?"));
+    }
+
+    #[test]
+    fn test_media_segment_urls_extracts_only_media_segments() {
+        let media = b"#EXTM3U\n#EXT-X-TARGETDURATION:10\n\
+            #EXTINF:10.0,\nseg001.ts\n#EXTINF:10.0,\nhttps://cdn.example.com/seg002.ts\n\
+            #EXT-X-ENDLIST\n";
+        let urls =
+            ManifestProcessor::media_segment_urls(media, "https://cdn.example.com/path/live.m3u8");
+
+        assert_eq!(
+            urls,
+            vec![
+                "https://cdn.example.com/path/seg001.ts".to_string(),
+                "https://cdn.example.com/seg002.ts".to_string(),
+            ]
+        );
+
+        let master = b"#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=1\nvariant.m3u8\n";
+        assert!(ManifestProcessor::media_segment_urls(
+            master,
+            "https://cdn.example.com/master.m3u8"
+        )
+        .is_empty());
     }
 
     #[test]

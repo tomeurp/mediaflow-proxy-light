@@ -101,6 +101,18 @@ async fn main() -> std::io::Result<()> {
         std::time::Duration::from_secs(30),
     ));
 
+    #[cfg(feature = "hls")]
+    let hls_prebuffer = web::Data::new(hls::prebuffer::HlsPrebuffer::new(
+        hls::prebuffer::PrebufferConfig {
+            segments_ahead: config.hls.prebuffer_segments,
+            max_prefetchers: config.hls.prebuffer_cache_size,
+            inactivity_timeout: std::time::Duration::from_secs(
+                config.hls.inactivity_timeout.max(1),
+            ),
+            segment_cache_ttl: std::time::Duration::from_secs(config.hls.segment_cache_ttl.max(1)),
+        },
+    ));
+
     // EPG cache: XMLTV data is large but rarely changes — use a 1-hour TTL by default.
     // The newtype wrapper prevents Actix DI conflicts with the MPD LocalCache above.
     let epg_cache = web::Data::new(epg::handler::EpgCache(cache::local::LocalCache::new(
@@ -147,6 +159,11 @@ async fn main() -> std::io::Result<()> {
         #[cfg(feature = "mpd")]
         {
             app = app.app_data(mpd_bytes_cache.clone());
+        }
+
+        #[cfg(feature = "hls")]
+        {
+            app = app.app_data(hls_prebuffer.clone());
         }
 
         let mut app = app

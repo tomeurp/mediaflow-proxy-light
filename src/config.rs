@@ -11,6 +11,12 @@ pub struct ServerConfig {
     pub host: String,
     pub port: u16,
     pub workers: usize,
+    /// Public URL path prefix for generated URLs behind a reverse proxy.
+    ///
+    /// Empty string means no prefix. Non-empty values are normalized to start
+    /// with `/` and not end with `/`, e.g. `/mediaflow` or `/api/v1`.
+    /// Values containing whitespace, control characters, or URL delimiters are
+    /// rejected during configuration loading.
     #[serde(default)]
     pub path: String,
 }
@@ -612,6 +618,28 @@ impl Config {
         }
 
         let config = builder.build()?;
-        config.try_deserialize()
+        let mut config: Self = config.try_deserialize()?;
+        config.server.path = normalize_server_path(&config.server.path)?;
+        Ok(config)
     }
+}
+
+fn normalize_server_path(path: &str) -> Result<String, config::ConfigError> {
+    if path
+        .bytes()
+        .any(|b| b.is_ascii_control() || b.is_ascii_whitespace())
+        || path.contains(['?', '#', '\\'])
+    {
+        return Err(config::ConfigError::Message(
+            "server.path must be empty or a URL path prefix like /mediaflow/prefix".to_string(),
+        ));
+    }
+
+    let trimmed = path.trim();
+    if trimmed.is_empty() || trimmed == "/" {
+        return Ok(String::new());
+    }
+
+    let normalized = format!("/{}", trimmed.trim_matches('/'));
+    Ok(normalized)
 }

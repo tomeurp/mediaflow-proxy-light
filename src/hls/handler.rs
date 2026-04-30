@@ -14,6 +14,7 @@ use crate::{
     hls::manifest::{
         error_playlist, graceful_end_playlist, ManifestOptions, ManifestProcessor, ProxyParams,
     },
+    hls::prebuffer::HlsPrebuffer,
     metrics::AppMetrics,
     proxy::stream::StreamManager,
     utils::url::public_proxy_base_url,
@@ -50,12 +51,13 @@ pub async fn hls_manifest_handler(
     proxy_data: web::ReqData<ProxyData>,
     config: web::Data<Arc<Config>>,
     metrics: web::Data<Arc<AppMetrics>>,
+    hls_prebuffer: web::Data<HlsPrebuffer>,
 ) -> AppResult<HttpResponse> {
     metrics.inc_request();
     metrics.hls_requests.fetch_add(1, Ordering::Relaxed);
     let destination = proxy_data.destination.clone();
     let proxy_base = public_proxy_base_url(&req, &config.server.path);
-    let params = extract_proxy_params(&proxy_data, &config);
+    let params = extract_proxy_params(&proxy_data, &config).with_playlist_url(&destination);
 
     // Extract manifest-processing options from query params
     let query_params: HashMap<String, String> =
@@ -112,6 +114,29 @@ pub async fn hls_manifest_handler(
     };
 
     // Process the M3U8
+    // force_playlist_proxy routes all media entries as playlists, so segment
+    // prebuffering would register unsafe/non-segment URLs.
+    if req.method() == actix_web::http::Method::GET
+        && !opts.no_proxy
+        && !opts.key_only_proxy
+        && !opts.force_playlist_proxy
+    {
+        let segment_urls = ManifestProcessor::media_segment_urls(&content, &destination)
+            .into_iter()
+            .take(config.hls.prebuffer_segments)
+            .collect::<Vec<_>>();
+        if !segment_urls.is_empty() {
+            let prebuffer = hls_prebuffer.clone();
+            let playlist_url = destination.clone();
+            let headers = params.pass_headers.clone();
+            tokio::spawn(async move {
+                prebuffer
+                    .register_playlist(&playlist_url, segment_urls, headers)
+                    .await;
+            });
+        }
+    }
+
     let processor = ManifestProcessor::new(&proxy_base, params, opts);
     let processed = processor.process(&content, &destination);
 
@@ -142,6 +167,15 @@ pub async fn hls_playlist_handler(
     proxy_data: web::ReqData<ProxyData>,
     config: web::Data<Arc<Config>>,
     metrics: web::Data<Arc<AppMetrics>>,
+    hls_prebuffer: web::Data<HlsPrebuffer>,
 ) -> AppResult<HttpResponse> {
-    hls_manifest_handler(req, stream_manager, proxy_data, config, metrics).await
+    hls_manifest_handler(
+        req,
+        stream_manager,
+        proxy_data,
+        config,
+        metrics,
+        hls_prebuffer,
+    )
+    .await
 }
