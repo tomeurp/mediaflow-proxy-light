@@ -300,7 +300,12 @@ async fn main() -> std::io::Result<()> {
             };
             app = app.service(
                 web::scope("/proxy/transcode")
+                    // Register both "" and "/" so the scope root is reachable with or
+                    // without a trailing slash. Reverse proxies (nginx, caddy) often
+                    // normalise /proxy/transcode → /proxy/transcode/ before forwarding,
+                    // which caused the 404 reported in issue #20.
                     .route("", web::get().to(transcode_handler))
+                    .route("/", web::get().to(transcode_handler))
                     .route("/init.mp4", web::get().to(transcode_hls_init_handler))
                     .route(
                         "/hls/playlist",

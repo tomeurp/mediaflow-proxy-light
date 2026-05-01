@@ -66,7 +66,7 @@ pub async fn transcode_url(
 ) -> AppResult<Bytes> {
     let encoder = cached_encoder();
 
-    let (output_format_flag, content_type) = match opts.output_format {
+    let (output_format_flag, _content_type) = match opts.output_format {
         OutputFormat::FragmentedMp4 => ("mp4", "video/mp4"),
         OutputFormat::MpegTs => ("mpegts", "video/mp2t"),
     };

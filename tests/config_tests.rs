@@ -1,18 +1,26 @@
 use mediaflow_proxy_light::config::Config;
+use std::sync::{Mutex, MutexGuard};
 use std::{env, fs};
 
-fn setup() {
+static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+fn setup() -> MutexGuard<'static, ()> {
+    let guard = ENV_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     env::remove_var("APP__SERVER__HOST");
     env::remove_var("APP__SERVER__PORT");
     env::remove_var("APP__SERVER__PATH");
     env::remove_var("APP__AUTH__API_PASSWORD");
     env::remove_var("APP__PROXY__BUFFER_SIZE");
     env::remove_var("APP__PROXY__TRANSPORT_ROUTES");
+    env::remove_var("CONFIG_PATH");
+    guard
 }
 
 #[test]
 fn test_config_from_env() {
-    setup();
+    let _guard = setup();
 
     // Set environment variables
     env::set_var("APP__SERVER__HOST", "127.0.0.1");
@@ -33,7 +41,7 @@ fn test_config_from_env() {
 
 #[test]
 fn test_transport_routes_config() {
-    setup();
+    let _guard = setup();
 
     // Modify the JSON string to be a single line with escaped quotes
     let routes_json = r#"{"all://*.streaming.com":{"proxy":true,"proxy_url":"socks5://test-proxy:1080","verify_ssl":true}}"#;
@@ -72,7 +80,7 @@ fn test_transport_routes_config() {
 
 #[test]
 fn test_transport_routes_from_toml() {
-    setup();
+    let _guard = setup();
 
     let config_content = r#"
 [server]

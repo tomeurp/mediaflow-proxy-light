@@ -932,4 +932,68 @@ mod middleware_tests {
             "ProxyData.destination must flow through to the handler"
         );
     }
+
+    /// Regression test for issue #20: GET /proxy/transcode returns 404.
+    ///
+    /// Verifies that both the exact path and trailing-slash variant reach the
+    /// handler when only the `""` route is registered in the scope (the current
+    /// main.rs pattern).  The trailing-slash variant was the failing case.
+    #[actix_web::test]
+    async fn transcode_scope_root_no_trailing_slash_is_reachable() {
+        let app = test::init_service(
+            App::new()
+                .wrap(AuthMiddleware::new("secret".into()))
+                .service(
+                    web::scope("/proxy/transcode")
+                        .route("", web::get().to(|| async { HttpResponse::Ok().body("hit") })),
+                )
+                // Generic /proxy scope mirrors what main.rs registers after the specific scopes.
+                .service(
+                    web::scope("/proxy")
+                        .route("/stream", web::get().to(|| async { HttpResponse::Ok().body("stream") })),
+                ),
+        )
+        .await;
+
+        let req = test::TestRequest::get()
+            .uri("/proxy/transcode?d=http%3A%2F%2Fexample.com%2Fvid.ts&api_password=secret")
+            .to_request();
+        let resp = test::call_service(&app, req).await;
+        assert_eq!(
+            resp.status(),
+            200,
+            "GET /proxy/transcode should be 200, not {}",
+            resp.status()
+        );
+    }
+
+    /// Issue #20 follow-up: GET /proxy/transcode/ (trailing slash) must also work.
+    #[actix_web::test]
+    async fn transcode_scope_root_trailing_slash_is_reachable() {
+        let app = test::init_service(
+            App::new()
+                .wrap(AuthMiddleware::new("secret".into()))
+                .service(
+                    web::scope("/proxy/transcode")
+                        .route("", web::get().to(|| async { HttpResponse::Ok().body("hit") }))
+                        .route("/", web::get().to(|| async { HttpResponse::Ok().body("hit") })),
+                )
+                .service(
+                    web::scope("/proxy")
+                        .route("/stream", web::get().to(|| async { HttpResponse::Ok().body("stream") })),
+                ),
+        )
+        .await;
+
+        let req = test::TestRequest::get()
+            .uri("/proxy/transcode/?d=http%3A%2F%2Fexample.com%2Fvid.ts&api_password=secret")
+            .to_request();
+        let resp = test::call_service(&app, req).await;
+        assert_eq!(
+            resp.status(),
+            200,
+            "GET /proxy/transcode/ (trailing slash) should be 200, not {}",
+            resp.status()
+        );
+    }
 }
