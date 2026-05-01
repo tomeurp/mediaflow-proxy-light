@@ -314,10 +314,7 @@ pub async fn acestream_stream_handler(
         }
     };
 
-    let mapped_stream = raw_stream.map(|r| {
-        r.map(bytes::Bytes::from)
-            .map_err(|e| AppError::Acestream(e))
-    });
+    let mapped_stream = raw_stream.map(|r| r.map_err(AppError::Acestream));
 
     let (stop_tx, stop_rx) = tokio::sync::oneshot::channel::<()>();
     let session_mgr_clone = session_mgr.clone();

@@ -192,8 +192,9 @@ mod tests {
         auth::encryption::EncryptionHandler,
         auth::middleware::AuthMiddleware,
         config::{
-            AcestreamConfig, AuthConfig, Config, DrmConfig, EpgConfig, HlsConfig, MpdConfig,
-            ProxyConfig, RedisConfig, ServerConfig, TelegramConfig, TranscodeConfig,
+            AcestreamConfig, AuthConfig, Config, DrmConfig, EpgConfig, ExtractorConfig,
+            HlsConfig, MpdConfig, ProxyConfig, RedisConfig, ServerConfig, TelegramConfig,
+            TranscodeConfig,
         },
     };
     use actix_web::{test, App};
@@ -239,6 +240,7 @@ mod tests {
             acestream: AcestreamConfig::default(),
             transcode: TranscodeConfig::default(),
             epg: EpgConfig::default(),
+            extractor: ExtractorConfig::default(),
             log_level: "info".to_string(),
         })
     }
