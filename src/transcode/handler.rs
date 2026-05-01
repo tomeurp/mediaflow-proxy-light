@@ -27,8 +27,8 @@ use crate::{
 /// Transcode an upstream URL and stream the output.
 pub async fn transcode_handler(
     req: HttpRequest,
-    stream_manager: web::Data<StreamManager>,
-    config: web::Data<Arc<Config>>,
+    _stream_manager: web::Data<StreamManager>,
+    _config: web::Data<Arc<Config>>,
 ) -> AppResult<HttpResponse> {
     let query: HashMap<String, String> =
         web::Query::<HashMap<String, String>>::from_query(req.query_string())
@@ -196,7 +196,7 @@ pub async fn transcode_hls_segment_handler(
         .get("start_ms")
         .and_then(|v| v.parse().ok())
         .unwrap_or(0.0);
-    let end_ms: f64 = query
+    let _end_ms: f64 = query
         .get("end_ms")
         .and_then(|v| v.parse().ok())
         .unwrap_or(86400000.0);

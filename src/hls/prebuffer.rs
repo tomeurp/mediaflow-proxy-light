@@ -226,7 +226,12 @@ impl HlsPrebuffer {
                         cache.set(cache_key, bytes).await;
                     }
                 } else {
-                    // Queue is empty — wait for signal or inactivity check
+                    // Queue is empty — wait for a wake signal or the inactivity deadline.
+                    //
+                    // tokio::Notify stores one pending notification: if prioritize() or
+                    // update() fires between pop_batch_with_headers returning empty and
+                    // notified().await being registered, notified() returns immediately
+                    // on the next poll rather than sleeping. No URLs are lost.
                     let _ = timeout(Duration::from_secs(5), prefetcher.wake.notified()).await;
                 }
             }

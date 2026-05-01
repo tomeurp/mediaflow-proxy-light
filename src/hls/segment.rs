@@ -81,13 +81,15 @@ pub async fn hls_segment_handler(
             .await
         {
             metrics.add_bytes_out(bytes.len() as u64);
+            let content_len = bytes.len();
             let mut resp = HttpResponse::Ok();
             resp.content_type(hls_segment_content_type(&proxy_data.destination));
             resp.insert_header(("cache-control", "no-cache"));
+            resp.insert_header((actix_web::http::header::CONTENT_LENGTH, content_len.to_string()));
             apply_custom_headers(&mut resp, &proxy_data.response_headers);
             resp.force_close();
 
-            return Ok(resp.body(bytes));
+            return Ok(resp.no_chunking(content_len as u64).body(bytes));
         }
     }
 
