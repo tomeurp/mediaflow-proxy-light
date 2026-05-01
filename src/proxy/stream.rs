@@ -85,15 +85,14 @@ impl StreamManager {
     /// overhead at high concurrency.
     fn create_default_client(config: &ProxyConfig, proxy_router: &ProxyRouter) -> Client {
         let follow_redirects = config.follow_redirects;
-        let request_timeout =
-            Duration::from_secs(config.connect_timeout * config.request_timeout_factor);
         let mut builder = Client::builder()
             // TCP connect timeout (handshake only — does NOT include pool-acquisition wait).
             .connect_timeout(Duration::from_secs(config.connect_timeout))
-            // Overall request timeout: covers pool-wait + connect + TLS + response headers.
-            // Body streaming is NOT limited by this — only the time until headers arrive.
-            .timeout(request_timeout)
-            // Keep idle connections alive for reuse.
+            // NO .timeout() here — a client-level timeout applies to the full request
+            // lifecycle including body streaming, which would kill live streams after
+            // connect_timeout × request_timeout_factor seconds.  Instead, a timeout is
+            // applied only around send() in make_request_raw (headers phase), so that
+            // stalled connections are detected without ever capping a live body stream.
             .pool_idle_timeout(Duration::from_secs(config.pool_idle_timeout))
             // Cap idle connections retained per upstream host.
             .pool_max_idle_per_host(config.pool_max_idle_per_host)
@@ -129,11 +128,9 @@ impl StreamManager {
         config: &ProxyConfig,
         route_config: &ProxyRouteConfig,
     ) -> AppResult<Client> {
-        let request_timeout =
-            Duration::from_secs(config.connect_timeout * config.request_timeout_factor);
         let mut builder = Client::builder()
             .connect_timeout(Duration::from_secs(config.connect_timeout))
-            .timeout(request_timeout)
+            // No client-level timeout — see create_default_client for rationale.
             .pool_idle_timeout(Duration::from_secs(config.pool_idle_timeout))
             .pool_max_idle_per_host(config.pool_max_idle_per_host)
             .no_brotli()
@@ -243,11 +240,20 @@ impl StreamManager {
             self.thread_client()
         };
 
-        let response = client
-            .get(&url)
-            .headers(headers)
-            .send()
+        // Apply timeout only to the connection + response-headers phase.
+        // Once send() resolves the header timeout has been satisfied; body
+        // streaming (create_stream) continues without a deadline so that
+        // live MPEG-TS or other indefinite streams are never cut off.
+        let header_timeout =
+            Duration::from_secs(self.config.connect_timeout * self.config.request_timeout_factor);
+        let response = timeout(header_timeout, client.get(&url).headers(headers).send())
             .await
+            .map_err(|_| {
+                AppError::Proxy(format!(
+                    "Request timed out after {} s waiting for response headers from {url}",
+                    header_timeout.as_secs()
+                ))
+            })?
             .map_err(|e| AppError::Proxy(format!("Failed to connect to upstream: {}", e)))?;
 
         // Accept 2xx (including 206 Partial Content) and 3xx redirects that reqwest follows.
