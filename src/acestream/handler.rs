@@ -308,12 +308,16 @@ pub async fn acestream_stream_handler(
         Ok(s) => s,
         Err(e) => {
             session_mgr.release_client(&infohash).await;
-            return Err(AppError::Acestream(format!("Engine stream request failed: {e}")));
+            return Err(AppError::Acestream(format!(
+                "Engine stream request failed: {e}"
+            )));
         }
     };
 
-    let mapped_stream = raw_stream
-        .map(|r| r.map(bytes::Bytes::from).map_err(|e| AppError::Acestream(e)));
+    let mapped_stream = raw_stream.map(|r| {
+        r.map(bytes::Bytes::from)
+            .map_err(|e| AppError::Acestream(e))
+    });
 
     let (stop_tx, stop_rx) = tokio::sync::oneshot::channel::<()>();
     let session_mgr_clone = session_mgr.clone();

@@ -203,9 +203,7 @@ impl DoodStreamExtractor {
             if !cookies.is_empty() {
                 let cf_domain = cookies
                     .iter()
-                    .find(|c| {
-                        c.get("name").and_then(|n| n.as_str()) == Some("cf_clearance")
-                    })
+                    .find(|c| c.get("name").and_then(|n| n.as_str()) == Some("cf_clearance"))
                     .and_then(|c| c.get("domain").and_then(|d| d.as_str()))
                     .map(|d| d.trim_start_matches('.').to_string())
                     .unwrap_or_else(|| "playmogo.com".to_string());

@@ -3,11 +3,11 @@
 use dashmap::DashMap;
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
 use rquest_util::Emulation;
+use serde_json;
 use std::collections::HashMap;
 use std::str::FromStr;
 use std::sync::OnceLock;
 use tokio::time::Duration;
-use serde_json;
 
 // ---------------------------------------------------------------------------
 // Public types

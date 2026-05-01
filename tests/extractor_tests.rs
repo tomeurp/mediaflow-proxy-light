@@ -157,9 +157,12 @@ fn test_factory_unknown_host_errors() {
 #[test]
 fn test_factory_case_insensitive() {
     // Keys are stored in lower-case; the factory must normalise the input.
-    get_extractor("DoodStream", HashMap::new(), None, None, 60).expect("case-insensitive match failed");
-    get_extractor("STREAMTAPE", HashMap::new(), None, None, 60).expect("case-insensitive match failed");
-    get_extractor("VixCloud", HashMap::new(), None, None, 60).expect("case-insensitive match failed");
+    get_extractor("DoodStream", HashMap::new(), None, None, 60)
+        .expect("case-insensitive match failed");
+    get_extractor("STREAMTAPE", HashMap::new(), None, None, 60)
+        .expect("case-insensitive match failed");
+    get_extractor("VixCloud", HashMap::new(), None, None, 60)
+        .expect("case-insensitive match failed");
 }
 
 // ---------------------------------------------------------------------------

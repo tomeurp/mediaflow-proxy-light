@@ -943,15 +943,15 @@ mod middleware_tests {
         let app = test::init_service(
             App::new()
                 .wrap(AuthMiddleware::new("secret".into()))
-                .service(
-                    web::scope("/proxy/transcode")
-                        .route("", web::get().to(|| async { HttpResponse::Ok().body("hit") })),
-                )
+                .service(web::scope("/proxy/transcode").route(
+                    "",
+                    web::get().to(|| async { HttpResponse::Ok().body("hit") }),
+                ))
                 // Generic /proxy scope mirrors what main.rs registers after the specific scopes.
-                .service(
-                    web::scope("/proxy")
-                        .route("/stream", web::get().to(|| async { HttpResponse::Ok().body("stream") })),
-                ),
+                .service(web::scope("/proxy").route(
+                    "/stream",
+                    web::get().to(|| async { HttpResponse::Ok().body("stream") }),
+                )),
         )
         .await;
 
@@ -975,13 +975,19 @@ mod middleware_tests {
                 .wrap(AuthMiddleware::new("secret".into()))
                 .service(
                     web::scope("/proxy/transcode")
-                        .route("", web::get().to(|| async { HttpResponse::Ok().body("hit") }))
-                        .route("/", web::get().to(|| async { HttpResponse::Ok().body("hit") })),
+                        .route(
+                            "",
+                            web::get().to(|| async { HttpResponse::Ok().body("hit") }),
+                        )
+                        .route(
+                            "/",
+                            web::get().to(|| async { HttpResponse::Ok().body("hit") }),
+                        ),
                 )
-                .service(
-                    web::scope("/proxy")
-                        .route("/stream", web::get().to(|| async { HttpResponse::Ok().body("stream") })),
-                ),
+                .service(web::scope("/proxy").route(
+                    "/stream",
+                    web::get().to(|| async { HttpResponse::Ok().body("stream") }),
+                )),
         )
         .await;
 
