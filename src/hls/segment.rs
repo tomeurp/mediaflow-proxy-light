@@ -9,12 +9,15 @@ use actix_web::{
 };
 use futures::stream;
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
+use std::collections::HashMap;
 use std::str::FromStr;
 
 use crate::{
     auth::encryption::ProxyData,
     error::{AppError, AppResult},
+    hls::prebuffer::HlsPrebuffer,
     proxy::stream::StreamManager,
+    utils::url::segment_extension,
 };
 
 /// `GET /proxy/hls/segment.{ext}` — proxy an HLS segment to the client.
@@ -26,12 +29,29 @@ pub async fn hls_segment_handler(
     stream_manager: web::Data<StreamManager>,
     proxy_data: web::ReqData<ProxyData>,
     metrics: web::Data<std::sync::Arc<crate::metrics::AppMetrics>>,
+    hls_prebuffer: web::Data<HlsPrebuffer>,
 ) -> AppResult<HttpResponse> {
     metrics.inc_request();
     metrics
         .hls_requests
         .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let query: HashMap<String, String> =
+        web::Query::<HashMap<String, String>>::from_query(req.query_string())
+            .map(|q| q.into_inner())
+            .unwrap_or_default();
+    let playlist_url = query.get("playlist_url").cloned();
+    let has_range = req.headers().contains_key("range");
     let mut request_headers = HeaderMap::new();
+    let pass_headers = proxy_data
+        .request_headers
+        .as_ref()
+        .and_then(|v| v.as_object())
+        .map(|obj| {
+            obj.iter()
+                .filter_map(|(k, v)| v.as_str().map(|s| (k.clone(), s.to_string())))
+                .collect::<HashMap<_, _>>()
+        })
+        .unwrap_or_default();
 
     // Forward the `Range` header so players can seek within segments
     if let Some(range) = req.headers().get("range") {
@@ -43,15 +63,33 @@ pub async fn hls_segment_handler(
     }
 
     // Merge custom request headers from proxy data (h_* params)
-    if let Some(custom) = &proxy_data.request_headers {
-        for (k, v) in custom.as_object().unwrap_or(&serde_json::Map::new()) {
-            if let Some(v_str) = v.as_str() {
-                if let (Ok(name), Ok(value)) =
-                    (HeaderName::from_str(k), HeaderValue::from_str(v_str))
-                {
-                    request_headers.insert(name, value);
-                }
-            }
+    for (k, v) in &pass_headers {
+        if let (Ok(name), Ok(value)) = (HeaderName::from_str(k), HeaderValue::from_str(v)) {
+            request_headers.insert(name, value);
+        }
+    }
+
+    if let Some(playlist_url) = &playlist_url {
+        hls_prebuffer
+            .on_segment_request(playlist_url, &proxy_data.destination)
+            .await;
+    }
+
+    if !has_range {
+        if let Some(bytes) = hls_prebuffer
+            .get_cached_segment(&proxy_data.destination, &pass_headers)
+            .await
+        {
+            metrics.add_bytes_out(bytes.len() as u64);
+            let content_len = bytes.len();
+            let mut resp = HttpResponse::Ok();
+            resp.content_type(hls_segment_content_type(&proxy_data.destination));
+            resp.insert_header(("cache-control", "no-cache"));
+            resp.insert_header((actix_web::http::header::CONTENT_LENGTH, content_len.to_string()));
+            apply_custom_headers(&mut resp, &proxy_data.response_headers);
+            resp.force_close();
+
+            return Ok(resp.no_chunking(content_len as u64).body(bytes));
         }
     }
 
@@ -88,19 +126,7 @@ pub async fn hls_segment_handler(
         .and_then(|v| v.parse::<u64>().ok())
         .unwrap_or(0);
 
-    // Custom response headers from proxy data (r_* / rp_* params)
-    if let Some(custom) = &proxy_data.response_headers {
-        for (k, v) in custom.as_object().unwrap_or(&serde_json::Map::new()) {
-            if let Some(v_str) = v.as_str() {
-                if let (Ok(name), Ok(val)) = (
-                    actix_web::http::header::HeaderName::from_str(k),
-                    actix_web::http::header::HeaderValue::from_str(v_str),
-                ) {
-                    resp.insert_header((name, val));
-                }
-            }
-        }
-    }
+    apply_custom_headers(&mut resp, &proxy_data.response_headers);
 
     // Tell actix-web to close the TCP connection after this response.
     // HLS segments are independent one-shot fetches; reusing a keepalive
@@ -137,6 +163,34 @@ pub async fn hls_segment_handler(
             Ok(resp
                 .no_chunking(content_length)
                 .body(SizedStream::new(content_length, empty)))
+        }
+    }
+}
+
+fn hls_segment_content_type(url: &str) -> &'static str {
+    match segment_extension(url) {
+        "ts" => "video/mp2t",
+        "m4s" | "mp4" => "video/mp4",
+        _ => "application/octet-stream",
+    }
+}
+
+fn apply_custom_headers(
+    resp: &mut actix_web::HttpResponseBuilder,
+    custom: &Option<serde_json::Value>,
+) {
+    if let Some(custom) = custom {
+        if let Some(map) = custom.as_object() {
+            for (k, v) in map {
+                if let Some(v_str) = v.as_str() {
+                    if let (Ok(name), Ok(val)) = (
+                        actix_web::http::header::HeaderName::from_str(k),
+                        actix_web::http::header::HeaderValue::from_str(v_str),
+                    ) {
+                        resp.insert_header((name, val));
+                    }
+                }
+            }
         }
     }
 }

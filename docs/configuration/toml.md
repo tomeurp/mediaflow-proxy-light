@@ -28,6 +28,9 @@ host    = "127.0.0.1"   # Use "0.0.0.0" for Docker or remote access
 port    = 8888
 workers = 4             # Default: 4
 path    = ""            # Public reverse-proxy path prefix, e.g. "/mediaflow/prefix"
+                        # Empty string (default) serves at root.
+                        # Must start with "/" if specified; no trailing slash.
+                        # Use when hosting behind a reverse proxy at a sub-path.
 
 # ===========================================================================
 # Auth
@@ -162,6 +165,35 @@ config only needs:
 [auth]
 api_password = "your-secure-password"
 ```
+
+---
+
+## Reverse Proxy Sub-path Configuration
+
+Set `server.path` only when MediaFlow is exposed under a sub-path such as
+`https://example.com/mediaflow` instead of the domain root. Keep the TOML value
+in sync with the proxy location. The value is normalized with a leading slash
+and no trailing slash.
+
+```nginx
+location /mediaflow/ {
+    proxy_pass http://127.0.0.1:8888/;  # trailing "/" strips the /mediaflow/ prefix
+    proxy_set_header Host $host;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Host $http_host;
+    proxy_set_header X-Forwarded-Proto $scheme;
+}
+```
+
+For that proxy location, configure:
+
+```toml
+[server]
+path = "/mediaflow"
+```
+
+Omit the trailing slash in `proxy_pass` only if you intentionally want Nginx to
+forward the `/mediaflow/...` prefix upstream as part of the request path.
 
 ---
 

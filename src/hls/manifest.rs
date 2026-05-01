@@ -9,6 +9,7 @@ use std::collections::HashMap;
 use m3u8_rs::{MasterPlaylist, MediaPlaylist, MediaSegment, Playlist};
 
 use crate::hls::skip_filter::{SkipRange, SkipSegmentFilter};
+use crate::proxy::handler::build_proxy_url;
 use crate::utils::url::{resolve_url, segment_extension};
 
 // ---------------------------------------------------------------------------
@@ -19,26 +20,23 @@ use crate::utils::url::{resolve_url, segment_extension};
 ///
 /// Format: `{proxy_base}/proxy/hls/manifest?d={encoded_url}&{passthrough_params}`
 pub fn proxy_manifest_url(proxy_base: &str, destination: &str, params: &ProxyParams) -> String {
-    let encoded = urlencoding::encode(destination);
-    let mut qs = format!("d={}", encoded);
-    if !params.api_password.is_empty() {
-        qs.push_str(&format!(
-            "&api_password={}",
-            urlencoding::encode(&params.api_password)
-        ));
-    }
-    for (k, v) in &params.pass_headers {
-        qs.push_str(&format!(
-            "&h_{}={}",
-            urlencoding::encode(k),
-            urlencoding::encode(v)
-        ));
-    }
-    format!(
-        "{}/proxy/hls/manifest?{}",
-        proxy_base.trim_end_matches('/'),
-        qs
+    build_proxy_url(
+        proxy_base,
+        Some("/proxy/hls/manifest"),
+        destination,
+        &HashMap::new(),
+        &params.pass_headers,
+        &HashMap::new(),
+        &HashMap::new(),
+        &[],
+        None,
+        None,
+        params.api_password_opt(),
+        None,
+        None,
+        false,
     )
+    .expect("failed to build HLS manifest proxy URL")
 }
 
 /// Build a proxied URL for a **segment** endpoint.
@@ -46,56 +44,50 @@ pub fn proxy_manifest_url(proxy_base: &str, destination: &str, params: &ProxyPar
 /// Format: `{proxy_base}/proxy/hls/segment.{ext}?d={encoded_url}&{passthrough_params}`
 pub fn proxy_segment_url(proxy_base: &str, destination: &str, params: &ProxyParams) -> String {
     let ext = segment_extension(destination);
-    let encoded = urlencoding::encode(destination);
-    let mut qs = format!("d={}", encoded);
-    if !params.api_password.is_empty() {
-        qs.push_str(&format!(
-            "&api_password={}",
-            urlencoding::encode(&params.api_password)
-        ));
+    let mut query_params = HashMap::new();
+    if let Some(playlist_url) = &params.playlist_url {
+        query_params.insert("playlist_url".to_string(), playlist_url.clone());
     }
-    for (k, v) in &params.pass_headers {
-        // Skip `range` for segments — each segment manages its own range
-        if k.eq_ignore_ascii_case("range") {
-            continue;
-        }
-        qs.push_str(&format!(
-            "&h_{}={}",
-            urlencoding::encode(k),
-            urlencoding::encode(v)
-        ));
-    }
-    format!(
-        "{}/proxy/hls/segment.{}?{}",
-        proxy_base.trim_end_matches('/'),
-        ext,
-        qs
+
+    build_proxy_url(
+        proxy_base,
+        Some(&format!("/proxy/hls/segment.{ext}")),
+        destination,
+        &query_params,
+        &params.pass_headers,
+        &HashMap::new(),
+        &HashMap::new(),
+        &[],
+        None,
+        None,
+        params.api_password_opt(),
+        None,
+        None,
+        false,
     )
+    .expect("failed to build HLS segment proxy URL")
 }
 
 /// Build a proxied URL for a **key** endpoint.
 /// Uses the segment endpoint path (no extension override).
 pub fn proxy_key_url(proxy_base: &str, destination: &str, params: &ProxyParams) -> String {
-    let encoded = urlencoding::encode(destination);
-    let mut qs = format!("d={}", encoded);
-    if !params.api_password.is_empty() {
-        qs.push_str(&format!(
-            "&api_password={}",
-            urlencoding::encode(&params.api_password)
-        ));
-    }
-    for (k, v) in &params.pass_headers {
-        qs.push_str(&format!(
-            "&h_{}={}",
-            urlencoding::encode(k),
-            urlencoding::encode(v)
-        ));
-    }
-    format!(
-        "{}/proxy/hls/segment?{}",
-        proxy_base.trim_end_matches('/'),
-        qs
+    build_proxy_url(
+        proxy_base,
+        Some("/proxy/hls/segment"),
+        destination,
+        &HashMap::new(),
+        &params.pass_headers,
+        &HashMap::new(),
+        &HashMap::new(),
+        &[],
+        None,
+        None,
+        params.api_password_opt(),
+        None,
+        None,
+        false,
     )
+    .expect("failed to build HLS key proxy URL")
 }
 
 // ---------------------------------------------------------------------------
@@ -109,6 +101,8 @@ pub struct ProxyParams {
     pub api_password: String,
     /// `h_*` request headers to re-attach to proxied URLs.
     pub pass_headers: HashMap<String, String>,
+    /// Upstream media playlist URL that produced segment proxy URLs.
+    pub playlist_url: Option<String>,
 }
 
 impl ProxyParams {
@@ -116,7 +110,21 @@ impl ProxyParams {
         Self {
             api_password: api_password.to_string(),
             pass_headers,
+            playlist_url: None,
         }
+    }
+
+    pub fn api_password_opt(&self) -> Option<&str> {
+        if self.api_password.is_empty() {
+            None
+        } else {
+            Some(self.api_password.as_str())
+        }
+    }
+
+    pub fn with_playlist_url(mut self, playlist_url: &str) -> Self {
+        self.playlist_url = Some(playlist_url.to_string());
+        self
     }
 }
 
@@ -173,6 +181,47 @@ impl ManifestProcessor {
                 self.process_lines(std::str::from_utf8(content).unwrap_or_default(), source_url)
             }
         }
+    }
+
+    /// Extract absolute media segment URLs from an upstream media playlist.
+    pub fn media_segment_urls(content: &[u8], source_url: &str) -> Vec<String> {
+        match m3u8_rs::parse_playlist_res(content) {
+            Ok(Playlist::MediaPlaylist(pl)) => pl
+                .segments
+                .iter()
+                .map(|seg| resolve_url(source_url, &seg.uri))
+                .filter(|url| !is_playlist_url(url))
+                .collect(),
+            Ok(Playlist::MasterPlaylist(_)) => Vec::new(),
+            Err(_) => Self::media_segment_urls_from_lines(
+                std::str::from_utf8(content).unwrap_or_default(),
+                source_url,
+            ),
+        }
+    }
+
+    fn media_segment_urls_from_lines(content: &str, source_url: &str) -> Vec<String> {
+        let mut urls = Vec::new();
+        let mut pending_extinf = false;
+
+        for line in content.lines().map(str::trim) {
+            if line.starts_with("#EXTINF:") {
+                pending_extinf = true;
+                continue;
+            }
+            if line.is_empty() || line.starts_with('#') {
+                continue;
+            }
+            if pending_extinf {
+                let resolved = resolve_url(source_url, line);
+                if !is_playlist_url(&resolved) {
+                    urls.push(resolved);
+                }
+                pending_extinf = false;
+            }
+        }
+
+        urls
     }
 
     // -----------------------------------------------------------------------
@@ -261,27 +310,7 @@ impl ManifestProcessor {
                 map.uri = if self.opts.no_proxy {
                     resolved
                 } else {
-                    // Init segments are MP4 boxes — use segment endpoint with .mp4 ext
-                    let encoded = urlencoding::encode(&resolved);
-                    let mut qs = format!("d={}", encoded);
-                    if !self.params.api_password.is_empty() {
-                        qs.push_str(&format!(
-                            "&api_password={}",
-                            urlencoding::encode(&self.params.api_password)
-                        ));
-                    }
-                    for (k, v) in &self.params.pass_headers {
-                        qs.push_str(&format!(
-                            "&h_{}={}",
-                            urlencoding::encode(k),
-                            urlencoding::encode(v)
-                        ));
-                    }
-                    format!(
-                        "{}/proxy/hls/segment.mp4?{}",
-                        self.proxy_base.trim_end_matches('/'),
-                        qs
-                    )
+                    proxy_segment_url(&self.proxy_base, &resolved, &self.params)
                 };
             }
 
@@ -428,7 +457,7 @@ impl ManifestProcessor {
         let abs = resolve_url(base_url, uri);
 
         // Sub-playlists (e.g. variant streams embedded in a media playlist)
-        if abs.contains(".m3u8") || abs.contains(".m3u") {
+        if is_playlist_url(&abs) {
             return proxy_manifest_url(&self.proxy_base, &abs, &self.params);
         }
 
@@ -545,20 +574,7 @@ impl ManifestProcessor {
         let new_uri = if self.opts.no_proxy {
             resolved
         } else if line.starts_with("#EXT-X-MAP") {
-            // Init segment
-            let encoded = urlencoding::encode(&resolved);
-            let mut qs = format!("d={}", encoded);
-            if !self.params.api_password.is_empty() {
-                qs.push_str(&format!(
-                    "&api_password={}",
-                    urlencoding::encode(&self.params.api_password)
-                ));
-            }
-            format!(
-                "{}/proxy/hls/segment.mp4?{}",
-                self.proxy_base.trim_end_matches('/'),
-                qs
-            )
+            proxy_segment_url(&self.proxy_base, &resolved, &self.params)
         } else if line.starts_with("#EXT-X-MEDIA") {
             // EXT-X-MEDIA URI is a rendition sub-playlist — route through manifest endpoint
             proxy_manifest_url(&self.proxy_base, &resolved, &self.params)
@@ -585,6 +601,12 @@ fn parse_extinf_duration(line: &str) -> f64 {
         .and_then(|rest| rest.split(',').next())
         .and_then(|s| s.trim().parse::<f64>().ok())
         .unwrap_or(0.0)
+}
+
+fn is_playlist_url(url: &str) -> bool {
+    let path = url.split(['?', '#']).next().unwrap_or(url);
+    let lower = path.to_ascii_lowercase();
+    lower.ends_with(".m3u8") || lower.ends_with(".m3u")
 }
 
 /// Inject `#EXT-X-START:TIME-OFFSET=<offset>,PRECISE=YES` right after `#EXTM3U`.
@@ -622,6 +644,21 @@ pub fn error_playlist(error_message: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::auth::encryption::EncryptionHandler;
+
+    fn extract_token_from_url(url: &str) -> &str {
+        let (_, rest) = url
+            .split_once("/_token_")
+            .unwrap_or_else(|| panic!("expected tokenized URL, got: {url}"));
+        let end = rest.find('/').unwrap_or(rest.len());
+        &rest[..end]
+    }
+
+    fn extract_uri_value(line: &str) -> Option<&str> {
+        let start = line.find("URI=\"")? + 5;
+        let end = line[start..].find('"')?;
+        Some(&line[start..start + end])
+    }
 
     fn default_processor(proxy_base: &str) -> ManifestProcessor {
         ManifestProcessor::new(
@@ -639,9 +676,40 @@ mod tests {
             "https://cdn.example.com/seg001.ts",
             &params,
         );
-        assert!(url.starts_with("http://proxy:8888/proxy/hls/segment.ts?"));
-        assert!(url.contains("d=https"));
-        assert!(url.contains("api_password=pass"));
+        assert!(url.starts_with("http://proxy:8888/_token_"));
+        assert!(url.ends_with("/proxy/hls/segment.ts"));
+
+        let token = extract_token_from_url(&url);
+        let pd = EncryptionHandler::new(b"pass")
+            .unwrap()
+            .decrypt(token, None)
+            .unwrap();
+        assert_eq!(pd.destination, "https://cdn.example.com/seg001.ts");
+    }
+
+    #[test]
+    fn test_proxy_segment_url_includes_playlist_url() {
+        let params = ProxyParams::new("pass", HashMap::new())
+            .with_playlist_url("https://cdn.example.com/live.m3u8");
+        let url = proxy_segment_url(
+            "http://proxy:8888",
+            "https://cdn.example.com/seg001.ts",
+            &params,
+        );
+        let token = extract_token_from_url(&url);
+        let pd = EncryptionHandler::new(b"pass")
+            .unwrap()
+            .decrypt(token, None)
+            .unwrap();
+
+        assert_eq!(pd.destination, "https://cdn.example.com/seg001.ts");
+        assert_eq!(
+            pd.query_params
+                .as_ref()
+                .and_then(|v| v.get("playlist_url"))
+                .and_then(|v| v.as_str()),
+            Some("https://cdn.example.com/live.m3u8")
+        );
     }
 
     #[test]
@@ -652,7 +720,8 @@ mod tests {
             "https://cdn.example.com/playlist.m3u8",
             &params,
         );
-        assert!(url.starts_with("http://proxy:8888/proxy/hls/manifest?"));
+        assert!(url.starts_with("http://proxy:8888/_token_"));
+        assert!(url.ends_with("/proxy/hls/manifest"));
     }
 
     #[test]
@@ -664,12 +733,12 @@ mod tests {
         let segment = proxy_segment_url(base, "https://cdn.example.com/seg001.ts", &params);
         let key = proxy_key_url(base, "https://cdn.example.com/key.bin", &params);
 
-        assert!(
-            manifest.starts_with("https://proxy.example.test/mediaflow/prefix/proxy/hls/manifest?")
-        );
-        assert!(segment
-            .starts_with("https://proxy.example.test/mediaflow/prefix/proxy/hls/segment.ts?"));
-        assert!(key.starts_with("https://proxy.example.test/mediaflow/prefix/proxy/hls/segment?"));
+        assert!(manifest.starts_with("https://proxy.example.test/mediaflow/prefix/_token_"));
+        assert!(manifest.ends_with("/proxy/hls/manifest"));
+        assert!(segment.starts_with("https://proxy.example.test/mediaflow/prefix/_token_"));
+        assert!(segment.ends_with("/proxy/hls/segment.ts"));
+        assert!(key.starts_with("https://proxy.example.test/mediaflow/prefix/_token_"));
+        assert!(key.ends_with("/proxy/hls/segment"));
     }
 
     #[test]
@@ -679,10 +748,20 @@ mod tests {
             #EXTINF:10.0,\nseg001.ts\n#EXTINF:10.0,\nseg002.ts\n#EXT-X-ENDLIST\n";
 
         let result = processor.process(m3u8, "https://cdn.example.com/playlist.m3u8");
+        let segment_url = result
+            .lines()
+            .find(|line| !line.is_empty() && !line.starts_with('#'))
+            .expect("expected segment URL");
 
-        // Segment URLs should be rewritten
-        assert!(result.contains("/proxy/hls/segment.ts?"));
-        assert!(result.contains("cdn.example.com"));
+        assert!(segment_url.starts_with("http://proxy:8888/_token_"));
+        assert!(segment_url.ends_with("/proxy/hls/segment.ts"));
+
+        let token = extract_token_from_url(segment_url);
+        let pd = EncryptionHandler::new(b"secret")
+            .unwrap()
+            .decrypt(token, None)
+            .unwrap();
+        assert_eq!(pd.destination, "https://cdn.example.com/seg001.ts");
         // Should NOT contain original relative URLs
         assert!(!result.contains("\nseg001.ts\n"));
     }
@@ -695,9 +774,75 @@ mod tests {
             #EXT-X-STREAM-INF:BANDWIDTH=400000\nlow/playlist.m3u8\n";
 
         let result = processor.process(m3u8, "https://cdn.example.com/master.m3u8");
+        let variant_url = result
+            .lines()
+            .find(|line| !line.is_empty() && !line.starts_with('#'))
+            .expect("expected variant URL");
 
-        // Variant stream URLs should be rewritten as manifest proxy URLs
-        assert!(result.contains("/proxy/hls/manifest?"));
+        assert!(variant_url.starts_with("http://proxy:8888/_token_"));
+        assert!(variant_url.ends_with("/proxy/hls/manifest"));
+    }
+
+    #[test]
+    fn test_process_master_playlist_resolves_relative_variants_against_effective_url() {
+        let processor = default_processor("http://proxy:8888");
+        let m3u8 = b"#EXTM3U\n#EXT-X-VERSION:3\n\
+            #EXT-X-STREAM-INF:BANDWIDTH=1400000\nhigh/playlist.m3u8\n";
+
+        let result = processor.process(m3u8, "https://edge.example.com/live/master.m3u8");
+        let variant_url = result
+            .lines()
+            .find(|line| !line.is_empty() && !line.starts_with('#'))
+            .expect("expected variant URL");
+        let token = extract_token_from_url(variant_url);
+        let pd = EncryptionHandler::new(b"secret")
+            .unwrap()
+            .decrypt(token, None)
+            .unwrap();
+
+        assert_eq!(
+            pd.destination,
+            "https://edge.example.com/live/high/playlist.m3u8"
+        );
+    }
+
+    #[test]
+    fn test_media_segment_urls_extracts_only_media_segments() {
+        let media = b"#EXTM3U\n#EXT-X-TARGETDURATION:10\n\
+            #EXTINF:10.0,\nseg001.ts\n#EXTINF:10.0,\nhttps://cdn.example.com/seg002.ts\n\
+            #EXT-X-ENDLIST\n";
+        let urls =
+            ManifestProcessor::media_segment_urls(media, "https://cdn.example.com/path/live.m3u8");
+
+        assert_eq!(
+            urls,
+            vec![
+                "https://cdn.example.com/path/seg001.ts".to_string(),
+                "https://cdn.example.com/seg002.ts".to_string(),
+            ]
+        );
+
+        let master = b"#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=1\nvariant.m3u8\n";
+        assert!(ManifestProcessor::media_segment_urls(
+            master,
+            "https://cdn.example.com/master.m3u8"
+        )
+        .is_empty());
+    }
+
+    #[test]
+    fn test_media_segment_urls_use_effective_manifest_url_as_base() {
+        let media = b"#EXTM3U\n#EXT-X-TARGETDURATION:10\n\
+            #EXTINF:10.0,\nsegments/seg001.ts\n#EXT-X-ENDLIST\n";
+        let urls = ManifestProcessor::media_segment_urls(
+            media,
+            "https://edge.example.com/live/redirected/manifest.m3u8",
+        );
+
+        assert_eq!(
+            urls,
+            vec!["https://edge.example.com/live/redirected/segments/seg001.ts".to_string()]
+        );
     }
 
     #[test]
@@ -754,13 +899,14 @@ mod tests {
             m3u8.as_bytes(),
             "https://upstream.example.com/playlist?type=video&rendition=hd",
         );
+        let tokenized_uri = result
+            .lines()
+            .find(|line| line.starts_with("#EXT-X-MEDIA"))
+            .and_then(extract_uri_value)
+            .expect("expected tokenized media URI");
 
-        // Audio sub-playlist URI must be proxied through manifest endpoint
-        assert!(
-            result.contains("/proxy/hls/manifest?"),
-            "EXT-X-MEDIA URI in media playlist not proxied. Got:\n{}",
-            result
-        );
+        assert!(tokenized_uri.contains("/_token_"));
+        assert!(tokenized_uri.ends_with("/proxy/hls/manifest"));
         // Must NOT contain the bare audio URL
         assert!(
             !result.contains("URI=\"https://upstream.example.com/playlist?type=audio"),
@@ -786,12 +932,13 @@ mod tests {
             "https://upstream.example.com/playlist?type=video&rendition=hd&token=VID\n",
         );
         let result = processor.process(m3u8.as_bytes(), "https://upstream.example.com/master.m3u8");
+        let tokenized_uri = result
+            .lines()
+            .find_map(extract_uri_value)
+            .expect("expected tokenized URI");
 
-        assert!(
-            result.contains("/proxy/hls/manifest?"),
-            "Audio URI with FORCED=NO not proxied. Got:\n{}",
-            result
-        );
+        assert!(tokenized_uri.contains("/_token_"));
+        assert!(tokenized_uri.ends_with("/proxy/hls/manifest"));
         assert!(
             !result.contains("URI=\"https://upstream.example.com/playlist?type=audio"),
             "Audio URI is still bare. Got:\n{}",
@@ -814,18 +961,58 @@ mod tests {
             "https://upstream.example.com/playlist?type=video&rendition=hd&token=VID\n",
         );
         let result = processor.process(m3u8.as_bytes(), "https://upstream.example.com/master.m3u8");
+        let tokenized_uri = result
+            .lines()
+            .find_map(extract_uri_value)
+            .expect("expected tokenized URI");
 
-        // EXT-X-MEDIA URIs must be proxied through manifest endpoint
-        assert!(
-            result.contains("/proxy/hls/manifest?"),
-            "EXT-X-MEDIA URI not proxied. Got:\n{}",
-            result
-        );
+        assert!(tokenized_uri.contains("/_token_"));
+        assert!(tokenized_uri.ends_with("/proxy/hls/manifest"));
         // The audio URI must NOT appear bare
         assert!(
             !result.contains("URI=\"https://upstream.example.com/playlist?type=audio"),
             "Audio sub-playlist URI is still bare (unproxied). Got:\n{}",
             result
         );
+    }
+
+    #[test]
+    fn test_process_media_playlist_resolves_relative_key_map_and_segment_against_effective_url() {
+        let processor = default_processor("http://proxy:8888");
+        let m3u8 = concat!(
+            "#EXTM3U\n",
+            "#EXT-X-VERSION:7\n",
+            "#EXT-X-TARGETDURATION:6\n",
+            "#EXT-X-KEY:METHOD=AES-128,URI=\"keys/key.bin\"\n",
+            "#EXT-X-MAP:URI=\"init/init.mp4\"\n",
+            "#EXTINF:6.0,\n",
+            "segments/seg001.ts\n",
+            "#EXT-X-ENDLIST\n",
+        );
+
+        let result = processor.process(
+            m3u8.as_bytes(),
+            "https://edge.example.com/live/redirected/playlist.m3u8",
+        );
+        let mut token_destinations = Vec::new();
+        let decrypt = EncryptionHandler::new(b"secret").unwrap();
+        for line in result.lines() {
+            if let Some(url) = extract_uri_value(line) {
+                let token = extract_token_from_url(url);
+                let pd = decrypt.decrypt(token, None).unwrap();
+                token_destinations.push(pd.destination);
+            } else if !line.is_empty() && !line.starts_with('#') {
+                let token = extract_token_from_url(line);
+                let pd = decrypt.decrypt(token, None).unwrap();
+                token_destinations.push(pd.destination);
+            }
+        }
+
+        assert!(token_destinations
+            .contains(&"https://edge.example.com/live/redirected/keys/key.bin".to_string()));
+        assert!(token_destinations
+            .contains(&"https://edge.example.com/live/redirected/init/init.mp4".to_string()));
+        assert!(token_destinations
+            .contains(&"https://edge.example.com/live/redirected/segments/seg001.ts".to_string()));
     }
 }
