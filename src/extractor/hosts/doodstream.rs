@@ -21,6 +21,12 @@ fn token_re() -> &'static Regex {
     static RE: OnceLock<Regex> = OnceLock::new();
     RE.get_or_init(|| Regex::new(r#"token=([^&\s'"]+)"#).unwrap())
 }
+fn js_redirect_re() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| {
+        Regex::new(r#"(?:window\.location|location\.href)\s*=\s*['"]https?://([^/'"]+)"#).unwrap()
+    })
+}
 
 pub struct DoodStreamExtractor {
     pub base: BaseExtractor,
@@ -104,6 +110,18 @@ impl DoodStreamExtractor {
                 "Doodstream: pass_md5 endpoint returned no stream URL \
                  (captcha session may have expired).",
             ));
+        }
+
+        // CloudFlare R2 storage URLs are self-contained — no salt/token needed.
+        if base_stream.to_lowercase().contains("cloudflarestorage.") {
+            let mut result_headers = HashMap::new();
+            result_headers.insert("user-agent".to_string(), ua.to_string());
+            result_headers.insert("referer".to_string(), format!("{base_url}/"));
+            return Ok(ExtractorResult {
+                destination_url: base_stream,
+                request_headers: result_headers,
+                mediaflow_endpoint: "proxy_stream_endpoint",
+            });
         }
 
         let token = token_re()
@@ -261,7 +279,26 @@ impl DoodStreamExtractor {
             hm.insert(HeaderName::from_static("referer"), v);
         }
 
-        let (html, final_url) = self.chrome_get(&embed_url, hm).await?;
+        let (mut html, mut final_url) = self.chrome_get(&embed_url, hm.clone()).await?;
+
+        // Some pages embed a JS redirect instead of a real HTTP redirect.
+        if let Some(cap) = js_redirect_re().captures(&html) {
+            let redirected_host = cap.get(1).unwrap().as_str();
+            let redirect_url = format!("https://{redirected_host}/e/{video_id}");
+            tracing::debug!("JS redirect detected → {}", redirect_url);
+            let mut hm2 = HeaderMap::new();
+            if let Ok(v) = HeaderValue::from_str(DOOD_UA) {
+                hm2.insert(HeaderName::from_static("user-agent"), v);
+            }
+            if let Ok(v) = HeaderValue::from_str(&format!("https://{redirected_host}/")) {
+                hm2.insert(HeaderName::from_static("referer"), v);
+            }
+            if let Ok((h, u)) = self.chrome_get(&redirect_url, hm2).await {
+                html = h;
+                final_url = u;
+            }
+        }
+
         let base_url = base_from_url(&final_url);
 
         if !html.contains("pass_md5") {
