@@ -20,13 +20,26 @@ use crate::extractor::{
 type BoxExtractor = Box<dyn Extractor>;
 type FactoryFn = fn(HashMap<String, String>, Option<String>) -> BoxExtractor;
 
-/// Returns an extractor instance for the given `host` name (case-insensitive),
-/// forwarding the caller-supplied `request_headers` and `proxy_url`.
+/// Returns an extractor instance for the given `host` name (case-insensitive).
 pub fn get_extractor(
     host: &str,
     request_headers: HashMap<String, String>,
     proxy_url: Option<String>,
+    byparr_url: Option<String>,
+    byparr_timeout: u64,
 ) -> Result<BoxExtractor, ExtractorError> {
+    let key = host.to_lowercase();
+
+    // DoodStream needs byparr config — construct directly outside the generic registry.
+    if key == "doodstream" {
+        return Ok(Box::new(DoodStreamExtractor::new(
+            request_headers,
+            proxy_url,
+            byparr_url,
+            byparr_timeout,
+        )));
+    }
+
     macro_rules! extractors {
         ($($name:expr => $ty:ty),* $(,)?) => {{
             static MAP: std::sync::OnceLock<HashMap<&'static str, FactoryFn>> =
@@ -42,7 +55,6 @@ pub fn get_extractor(
 
     let registry = extractors!(
         "city"         => CityExtractor,
-        "doodstream"   => DoodStreamExtractor,
         "filelions"    => FileLionsExtractor,
         "filemoon"     => FileMoonExtractor,
         "f16px"        => F16PxExtractor,
@@ -67,7 +79,6 @@ pub fn get_extractor(
         "vidfast"      => VidFastExtractor,
     );
 
-    let key = host.to_lowercase();
     let factory = registry
         .get(key.as_str())
         .ok_or_else(|| ExtractorError::extract(format!("Unsupported host: {host}")))?;

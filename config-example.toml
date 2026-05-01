@@ -109,6 +109,13 @@ video_bitrate = "4M"    # Target video bitrate passed to ffmpeg
 audio_bitrate = 192000  # Target audio bitrate in bits per second
 
 # ---------------------------------------------------------------------------
+# Extractor settings
+# ---------------------------------------------------------------------------
+[extractor]
+# byparr_url = "http://localhost:8192"  # Byparr service URL for Cloudflare bypass
+byparr_timeout = 60                     # Timeout (seconds) for Byparr requests
+
+# ---------------------------------------------------------------------------
 # Extractor integration-test URLs  (dev / local only — not used at runtime)
 # Comment out or remove any URL that is broken/unavailable.
 # Tests for missing keys are silently skipped.

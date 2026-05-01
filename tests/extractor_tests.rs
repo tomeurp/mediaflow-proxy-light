@@ -81,7 +81,7 @@ fn test_proxy_url() -> Option<String> {
 /// Core validation: create extractor → extract → check response contract.
 async fn assert_extractor(host: &str, url: &str) {
     let proxy_url = test_proxy_url();
-    let extractor = get_extractor(host, HashMap::new(), proxy_url)
+    let extractor = get_extractor(host, HashMap::new(), proxy_url, None, 60)
         .unwrap_or_else(|e| panic!("[{host}] failed to create extractor: {e}"));
 
     let result = extractor
@@ -143,23 +143,23 @@ fn test_factory_all_hosts_registered() {
         "voe",
     ];
     for host in known_hosts {
-        get_extractor(host, HashMap::new(), None)
+        get_extractor(host, HashMap::new(), None, None, 60)
             .unwrap_or_else(|e| panic!("factory rejected known host '{host}': {e}"));
     }
 }
 
 #[test]
 fn test_factory_unknown_host_errors() {
-    let result = get_extractor("nonexistent_host_xyz", HashMap::new(), None);
+    let result = get_extractor("nonexistent_host_xyz", HashMap::new(), None, None, 60);
     assert!(result.is_err(), "expected Err for unknown host");
 }
 
 #[test]
 fn test_factory_case_insensitive() {
     // Keys are stored in lower-case; the factory must normalise the input.
-    get_extractor("DoodStream", HashMap::new(), None).expect("case-insensitive match failed");
-    get_extractor("STREAMTAPE", HashMap::new(), None).expect("case-insensitive match failed");
-    get_extractor("VixCloud", HashMap::new(), None).expect("case-insensitive match failed");
+    get_extractor("DoodStream", HashMap::new(), None, None, 60).expect("case-insensitive match failed");
+    get_extractor("STREAMTAPE", HashMap::new(), None, None, 60).expect("case-insensitive match failed");
+    get_extractor("VixCloud", HashMap::new(), None, None, 60).expect("case-insensitive match failed");
 }
 
 // ---------------------------------------------------------------------------

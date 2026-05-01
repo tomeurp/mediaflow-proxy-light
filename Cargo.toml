@@ -128,11 +128,14 @@ reqwest = { version = "0.12.28", default-features = false, features = ["stream",
 rquest = { version = "5", default-features = false, features = ["full", "socks"] }
 rquest-util = "2"
 
-# Crypto — AES-CBC for proxy-URL encryption, AES-CTR for CENC DRM
+# Crypto — AES-CBC for proxy-URL encryption, AES-CTR for CENC DRM, AES-GCM for F16Px
 aes = "0.8"
 cbc = { version = "0.1", features = ["alloc"] }
 cipher = { version = "0.4", features = ["block-padding"] }
 ctr = "0.9"
+aes-gcm = "0.10"
+hmac = "0.12"
+sha2 = "0.10"
 rand = "0.9.3"
 base64 = "0.22.1"
 

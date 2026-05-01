@@ -7,6 +7,7 @@ use std::collections::HashMap;
 use std::str::FromStr;
 use std::sync::OnceLock;
 use tokio::time::Duration;
+use serde_json;
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -207,6 +208,49 @@ impl BaseExtractor {
             base_headers,
             mediaflow_endpoint: "proxy_stream_endpoint",
         }
+    }
+
+    /// Make an HTTP POST request with a JSON body and return the response body as a string.
+    pub async fn post_json_text(
+        &self,
+        url: &str,
+        body: serde_json::Value,
+        extra_headers: Option<HashMap<String, String>>,
+    ) -> Result<(String, String), ExtractorError> {
+        let mut hm = HeaderMap::new();
+        let mut merged = self.base_headers.clone();
+        if let Some(extra) = extra_headers {
+            merged.extend(extra);
+        }
+        for (k, v) in &merged {
+            if let (Ok(n), Ok(val)) = (HeaderName::from_str(k), HeaderValue::from_str(v)) {
+                hm.insert(n, val);
+            }
+        }
+
+        let resp = self
+            .client
+            .post(url)
+            .headers(hm)
+            .json(&body)
+            .send()
+            .await
+            .map_err(|e| ExtractorError::Network(e.to_string()))?;
+
+        let status = resp.status().as_u16();
+        if status >= 400 {
+            return Err(ExtractorError::Http {
+                status,
+                message: format!("HTTP {status} from {url}"),
+            });
+        }
+
+        let final_url = resp.url().to_string();
+        let text = resp
+            .text()
+            .await
+            .map_err(|e| ExtractorError::Network(e.to_string()))?;
+        Ok((text, final_url))
     }
 
     /// Make an HTTP GET request and return the response body as a string.

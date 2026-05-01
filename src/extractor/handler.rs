@@ -73,8 +73,14 @@ pub async fn extractor_video_handler(
     // all route regexes on every extraction request.
     let proxy_url: Option<String> = stream_manager.get_proxy_url_for(&url);
 
-    let extractor = get_extractor(&host, request_headers, proxy_url)
-        .map_err(|e| AppError::Extractor(e.to_string()))?;
+    let extractor = get_extractor(
+        &host,
+        request_headers,
+        proxy_url,
+        config.extractor.byparr_url.clone(),
+        config.extractor.byparr_timeout,
+    )
+    .map_err(|e| AppError::Extractor(e.to_string()))?;
 
     tracing::info!("Extractor: host={host}, url={url}");
 

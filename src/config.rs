@@ -383,6 +383,25 @@ impl Default for TranscodeConfig {
 }
 
 // ---------------------------------------------------------------------------
+// Extractor config
+// ---------------------------------------------------------------------------
+
+fn default_byparr_timeout() -> u64 {
+    60
+}
+
+#[derive(Debug, Deserialize, Clone, Default)]
+pub struct ExtractorConfig {
+    /// Byparr service URL for Cloudflare bypass (FlareSolverr-compatible API).
+    /// Example: http://localhost:8192
+    #[serde(default)]
+    pub byparr_url: Option<String>,
+    /// Timeout in seconds for Byparr requests.
+    #[serde(default = "default_byparr_timeout")]
+    pub byparr_timeout: u64,
+}
+
+// ---------------------------------------------------------------------------
 // Root config
 // ---------------------------------------------------------------------------
 
@@ -407,6 +426,8 @@ pub struct Config {
     pub transcode: TranscodeConfig,
     #[serde(default)]
     pub epg: EpgConfig,
+    #[serde(default)]
+    pub extractor: ExtractorConfig,
     /// Log filter directive (e.g. "debug", "info", "mediaflow_proxy_light=debug,info").
     /// Overrides the RUST_LOG env var when set.
     #[serde(default = "default_log_level")]
@@ -566,7 +587,9 @@ impl Config {
             .set_default("transcode.video_bitrate", "4M")?
             .set_default("transcode.audio_bitrate", 192000)?
             // EPG
-            .set_default("epg.cache_ttl", 3600)?;
+            .set_default("epg.cache_ttl", 3600)?
+            // Extractor
+            .set_default("extractor.byparr_timeout", 60)?;
 
         if let Ok(config_path) = std::env::var("CONFIG_PATH") {
             let path = Path::new(&config_path);
