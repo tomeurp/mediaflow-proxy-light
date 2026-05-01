@@ -85,7 +85,10 @@ pub async fn hls_segment_handler(
             let mut resp = HttpResponse::Ok();
             resp.content_type(hls_segment_content_type(&proxy_data.destination));
             resp.insert_header(("cache-control", "no-cache"));
-            resp.insert_header((actix_web::http::header::CONTENT_LENGTH, content_len.to_string()));
+            resp.insert_header((
+                actix_web::http::header::CONTENT_LENGTH,
+                content_len.to_string(),
+            ));
             apply_custom_headers(&mut resp, &proxy_data.response_headers);
             resp.force_close();
 

@@ -192,9 +192,8 @@ mod tests {
         auth::encryption::EncryptionHandler,
         auth::middleware::AuthMiddleware,
         config::{
-            AcestreamConfig, AuthConfig, Config, DrmConfig, EpgConfig, ExtractorConfig,
-            HlsConfig, MpdConfig, ProxyConfig, RedisConfig, ServerConfig, TelegramConfig,
-            TranscodeConfig,
+            AcestreamConfig, AuthConfig, Config, DrmConfig, EpgConfig, ExtractorConfig, HlsConfig,
+            MpdConfig, ProxyConfig, RedisConfig, ServerConfig, TelegramConfig, TranscodeConfig,
         },
     };
     use actix_web::{test, App};
