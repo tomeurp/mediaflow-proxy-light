@@ -9,6 +9,9 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use bytes::Bytes;
+use futures::Stream;
+
 use dashmap::DashMap;
 use serde::Deserialize;
 use uuid::Uuid;
@@ -74,7 +77,12 @@ impl AcestreamSession {
 #[derive(Clone)]
 pub struct AcestreamSessionManager {
     sessions: Arc<DashMap<String, AcestreamSession>>,
+    /// Short-lived HTTP client for engine control calls (stat, stop, session init).
     client: reqwest::Client,
+    /// Streaming HTTP client for /ace/getstream — NO overall timeout so a live
+    /// MPEG-TS connection is never killed by the request_timeout_factor limit.
+    /// Only the connect timeout is set (guards against engine startup delays).
+    stream_client: reqwest::Client,
 }
 
 impl Default for AcestreamSessionManager {
@@ -83,6 +91,14 @@ impl Default for AcestreamSessionManager {
             sessions: Arc::new(DashMap::new()),
             client: reqwest::Client::builder()
                 .timeout(Duration::from_secs(30))
+                .build()
+                .unwrap_or_default(),
+            stream_client: reqwest::Client::builder()
+                .connect_timeout(Duration::from_secs(30))
+                // Deliberately no .timeout() — live MPEG-TS streams run indefinitely.
+                .no_gzip()
+                .no_deflate()
+                .no_brotli()
                 .build()
                 .unwrap_or_default(),
         }
@@ -233,6 +249,35 @@ impl AcestreamSessionManager {
                 .stat_url
                 .map(|s| rewrite_engine_host(s, engine_host, engine_port)),
         ))
+    }
+
+    /// Open a raw MPEG-TS stream from the Acestream engine's getstream endpoint.
+    ///
+    /// Uses the no-timeout `stream_client` so the connection is not killed by
+    /// the proxy's `request_timeout_factor` limit (which only guards short-lived
+    /// manifest/segment fetches, not indefinite live streams).
+    pub async fn open_ts_stream(
+        &self,
+        ts_url: &str,
+    ) -> Result<impl Stream<Item = Result<Bytes, String>>, String> {
+        let response = self
+            .stream_client
+            .get(ts_url)
+            .send()
+            .await
+            .map_err(|e| format!("Acestream getstream connect failed: {e}"))?;
+
+        if !response.status().is_success() {
+            return Err(format!(
+                "Acestream getstream returned HTTP {}",
+                response.status()
+            ));
+        }
+
+        use futures::StreamExt;
+        Ok(response
+            .bytes_stream()
+            .map(|r| r.map_err(|e| format!("Acestream stream read error: {e}"))))
     }
 
     /// Increment the client count for a session (call once per active stream consumer).

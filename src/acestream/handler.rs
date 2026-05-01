@@ -20,7 +20,7 @@ use std::sync::Arc;
 use std::task::{Context, Poll};
 
 use actix_web::{web, HttpRequest, HttpResponse};
-use futures::Stream;
+use futures::{Stream, StreamExt};
 use reqwest::header::HeaderMap;
 use urlencoding::encode as url_encode;
 
@@ -297,29 +297,23 @@ pub async fn acestream_stream_handler(
     // Register this client BEFORE opening the upstream connection so that a
     // concurrent disconnect from another client cannot race and decrement the
     // counter to zero (triggering an engine stop) while this client is still
-    // setting up.  If create_stream fails we undo the increment.
+    // setting up.  If open_ts_stream fails we undo the increment.
     session_mgr.increment_client(&infohash);
 
-    // Stream the live MPEG-TS response chunk-by-chunk.
-    // Do NOT buffer with .bytes() — it will wait forever on a live stream.
-    let stream_result = stream_manager
-        .create_stream(ts_url, HeaderMap::new(), false)
-        .await
-        .map_err(|e| AppError::Acestream(format!("Engine stream request failed: {e}")));
-
-    let (_status, _resp_headers, stream_opt) = match stream_result {
-        Ok(result) => result,
+    // Stream the live MPEG-TS response chunk-by-chunk using a no-timeout client.
+    // The main stream_manager client has a request_timeout_factor that limits
+    // requests to connect_timeout × factor seconds — fine for CDN segments but
+    // fatal for a live stream that runs indefinitely.
+    let raw_stream = match session_mgr.open_ts_stream(&ts_url).await {
+        Ok(s) => s,
         Err(e) => {
-            // Undo the pre-increment — this client will never stream.
             session_mgr.release_client(&infohash).await;
-            return Err(e);
+            return Err(AppError::Acestream(format!("Engine stream request failed: {e}")));
         }
     };
 
-    let Some(raw_stream) = stream_opt else {
-        session_mgr.release_client(&infohash).await;
-        return Ok(HttpResponse::Ok().content_type("video/mp2t").finish());
-    };
+    let mapped_stream = raw_stream
+        .map(|r| r.map(bytes::Bytes::from).map_err(|e| AppError::Acestream(e)));
 
     let (stop_tx, stop_rx) = tokio::sync::oneshot::channel::<()>();
     let session_mgr_clone = session_mgr.clone();
@@ -330,7 +324,7 @@ pub async fn acestream_stream_handler(
         session_mgr_clone.release_client(&infohash_clone).await;
     });
 
-    let wrapped = StopNotifyStream::new(raw_stream, stop_tx);
+    let wrapped = StopNotifyStream::new(mapped_stream, stop_tx);
     let response_stream = crate::proxy::stream::ResponseStream::new(wrapped);
 
     Ok(HttpResponse::Ok()
