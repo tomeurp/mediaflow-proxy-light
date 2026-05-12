@@ -947,6 +947,8 @@ pub fn build_hls_master(
 
     let audio_profiles: Vec<&MpdProfile> =
         parsed.profiles.iter().filter(|p| p.is_audio()).collect();
+    let subtitle_profiles: Vec<&MpdProfile> =
+        parsed.profiles.iter().filter(|p| p.is_text()).collect();
     let mut video_profiles: Vec<&MpdProfile> =
         parsed.profiles.iter().filter(|p| p.is_video()).collect();
 
