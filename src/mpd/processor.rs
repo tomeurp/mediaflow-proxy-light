@@ -9,8 +9,8 @@ use tracing::warn;
 
 use crate::hls::skip_filter::{SkipRange, SkipSegmentFilter};
 use crate::mpd::parser::{
-    AdaptationSet, ContentProtection, MpdDocument, Representation, SegmentBase, SegmentList,
-    SegmentTemplate,
+    AdaptationSet, BaseUrl, ContentProtection, MpdDocument, Period, Representation, SegmentBase,
+    SegmentList, SegmentTemplate,
 };
 use crate::mpd::segment::{expand_template, resolve_url};
 use crate::mpd::timeline::{
@@ -53,6 +53,7 @@ pub struct MpdProfile {
     pub codecs: String,
     pub bandwidth: u64,
     pub lang: Option<String>,
+    pub label: Option<String>,
     /// For video profiles.
     pub width: u32,
     pub height: u32,
@@ -78,6 +79,12 @@ impl MpdProfile {
     }
     pub fn is_audio(&self) -> bool {
         self.mime_type.contains("audio")
+    }
+    pub fn is_text(&self) -> bool {
+        self.mime_type.contains("text")
+            || self.mime_type.contains("vtt")
+            || self.mime_type.contains("ttml")
+            || self.mime_type.contains("stpp")
     }
 }
 
@@ -160,11 +167,36 @@ pub fn parse_mpd_document(
         let period_avail_start = availability_start_unix.unwrap_or(0.0) + period_start_sec;
 
         for adaptation in &period.adaptation_sets {
+            if adaptation.representations.is_empty() {
+                // Some DASH manifests expose sidecar text tracks as an
+                // AdaptationSet with a BaseURL but no Representation. Build a
+                // synthetic representation so subtitle-only tracks are not
+                // dropped before HLS master generation.
+                let synthetic_representation = Representation::default();
+                if let Some(profile) = parse_representation(
+                    doc,
+                    &synthetic_representation,
+                    adaptation,
+                    period,
+                    mpd_url,
+                    is_live,
+                    period_avail_start,
+                    period_start_sec,
+                    time_shift_buffer_depth_sec,
+                    media_presentation_duration_sec,
+                    parse_segment_profile_id,
+                ) {
+                    profiles.push(profile);
+                }
+                continue;
+            }
+
             for representation in &adaptation.representations {
                 if let Some(profile) = parse_representation(
                     doc,
                     representation,
                     adaptation,
+                    period,
                     mpd_url,
                     is_live,
                     period_avail_start,
@@ -195,10 +227,40 @@ pub fn parse_mpd_document(
 // Representation → MpdProfile
 // ---------------------------------------------------------------------------
 
+fn base_url_text(base: &Option<BaseUrl>) -> Option<&str> {
+    base.as_ref()
+        .and_then(|b| b.value.as_deref())
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
+}
+
+fn resolve_inherited_base_url(
+    doc: &MpdDocument,
+    period: &Period,
+    adaptation: &AdaptationSet,
+    rep: &Representation,
+    mpd_url: &str,
+) -> String {
+    let mut current = mpd_url.to_string();
+    for base in [
+        base_url_text(&doc.base_url),
+        base_url_text(&period.base_url),
+        base_url_text(&adaptation.base_url),
+        base_url_text(&rep.base_url),
+    ]
+    .into_iter()
+    .flatten()
+    {
+        current = resolve_url(&current, base);
+    }
+    current
+}
+
 fn parse_representation(
     _doc: &MpdDocument,
     rep: &Representation,
     adaptation: &AdaptationSet,
+    period: &Period,
     mpd_url: &str,
     is_live: bool,
     period_avail_start_unix: f64,
@@ -213,23 +275,32 @@ fn parse_representation(
         .as_deref()
         .or(adaptation.mime_type.as_deref())
         .unwrap_or_else(|| {
-            // Guess from codecs
-            rep.codecs
-                .as_deref()
-                .or(adaptation.codecs.as_deref())
-                .map(|c| {
-                    if c.contains("avc") || c.contains("hvc") || c.contains("vp") {
-                        "video/mp4"
-                    } else {
-                        "audio/mp4"
-                    }
-                })
-                .unwrap_or("video/mp4")
+            // Guess from codecs and BaseURL. Text-only adaptation sets often only
+            // expose a .vtt BaseURL and no Representation-level mime/codecs.
+            let codecs = rep.codecs.as_deref().or(adaptation.codecs.as_deref()).unwrap_or("");
+            let base_hint = rep
+                .base_url
+                .as_ref()
+                .and_then(|b| b.value.as_deref())
+                .or_else(|| adaptation.base_url.as_ref().and_then(|b| b.value.as_deref()))
+                .unwrap_or("")
+                .to_lowercase();
+            if codecs.contains("avc") || codecs.contains("hvc") || codecs.contains("vp") {
+                "video/mp4"
+            } else if codecs.contains("wvtt") || codecs.contains("stpp") || base_hint.ends_with(".vtt") {
+                "text/vtt"
+            } else {
+                "audio/mp4"
+            }
         })
         .to_string();
 
-    // Only handle video/audio
-    if !mime_type.contains("video") && !mime_type.contains("audio") {
+    // Only handle video/audio/text tracks.
+    let is_text_profile = mime_type.contains("text")
+        || mime_type.contains("vtt")
+        || mime_type.contains("ttml")
+        || mime_type.contains("stpp");
+    if !mime_type.contains("video") && !mime_type.contains("audio") && !is_text_profile {
         return None;
     }
 
@@ -268,6 +339,7 @@ fn parse_representation(
         });
 
     let lang = rep.lang.clone().or_else(|| adaptation.lang.clone());
+    let label = rep.label.clone().or_else(|| adaptation.label.clone());
 
     // Video-specific
     let width: u32 = rep
@@ -331,12 +403,12 @@ fn parse_representation(
         (1, false, 1)
     };
 
-    // Base URL (may be a relative path prefix inside the representation)
-    let base_url_str = rep
-        .base_url
-        .as_ref()
-        .and_then(|b| b.value.as_deref())
-        .unwrap_or("");
+    // Resolve BaseURL through the DASH inheritance chain:
+    // MPD -> Period -> AdaptationSet -> Representation.
+    // Absolute BaseURLs replace the previous root; relative BaseURLs are joined
+    // against the current inherited base.
+    let full_base_url = resolve_inherited_base_url(_doc, period, adaptation, rep, mpd_url);
+    let base_url_str = full_base_url.as_str();
 
     // Compute initUrl from template / list / base even when not fully parsing segments
     // Use rep_id (raw XML id) for $RepresentationID$ template expansion, not the unique profile id.
@@ -350,6 +422,7 @@ fn parse_representation(
         codecs,
         bandwidth,
         lang,
+        label,
         width,
         height,
         frame_rate,
@@ -433,9 +506,22 @@ fn generate_segments(
             timescale,
         )
     } else if let Some(list) = seg_list {
-        generate_from_list(list, rep, mpd_url, timescale)
+        generate_from_list(list, mpd_url, base_url_str, timescale)
     } else if let Some(base) = seg_base {
-        generate_from_base(base, rep, mpd_url, media_presentation_duration_sec)
+        generate_from_base(base, mpd_url, base_url_str, media_presentation_duration_sec)
+    } else if profile.is_text() && base_url_str != mpd_url {
+        vec![MpdSegment {
+            media: base_url_str.to_string(),
+            number: 1,
+            extinf: media_presentation_duration_sec.unwrap_or(1.0).max(1.0),
+            time: None,
+            duration_mpd_timescale: None,
+            start_unix: None,
+            program_date_time: None,
+            media_range: None,
+            init_range: None,
+            index_range: None,
+        }]
     } else {
         Vec::new()
     }
@@ -529,12 +615,7 @@ fn timeline_entry_to_segment(
             None
         },
     );
-    let media_path = if !base_url_str.is_empty() {
-        format!("{base_url_str}{expanded}")
-    } else {
-        expanded
-    };
-    let media_url = resolve_url(mpd_url, &media_path);
+    let media_url = resolve_url(base_url_str, &expanded);
 
     let extinf = if let (Some(start), Some(end)) = (entry.start_unix, entry.end_unix) {
         end - start
@@ -568,8 +649,8 @@ fn timeline_entry_to_segment(
 
 fn generate_from_list(
     list: &SegmentList,
-    rep: &Representation,
-    mpd_url: &str,
+    _mpd_url: &str,
+    base_url_str: &str,
     timescale: u64,
 ) -> Vec<MpdSegment> {
     let list_timescale: u64 = list
@@ -588,20 +669,14 @@ fn generate_from_list(
         1.0
     };
 
-    let base_url = rep
-        .base_url
-        .as_ref()
-        .and_then(|b| b.value.as_deref())
-        .unwrap_or("");
-
     list.segment_urls
         .iter()
         .enumerate()
         .filter_map(|(i, seg_url)| {
             let media_url = if let Some(media) = seg_url.media.as_deref() {
-                resolve_url(mpd_url, media)
-            } else if !base_url.is_empty() {
-                resolve_url(mpd_url, base_url)
+                resolve_url(base_url_str, media)
+            } else if !base_url_str.is_empty() {
+                base_url_str.to_string()
             } else {
                 return None;
             };
@@ -624,16 +699,11 @@ fn generate_from_list(
 
 fn generate_from_base(
     base: &SegmentBase,
-    rep: &Representation,
-    mpd_url: &str,
+    _mpd_url: &str,
+    base_url_str: &str,
     total_duration_sec: Option<f64>,
 ) -> Vec<MpdSegment> {
-    let base_url = rep
-        .base_url
-        .as_ref()
-        .and_then(|b| b.value.as_deref())
-        .unwrap_or("");
-    let media_url = resolve_url(mpd_url, base_url);
+    let media_url = base_url_str.to_string();
 
     let extinf = total_duration_sec.unwrap_or(1.0).max(1.0);
     let init_range = base.initialization.as_ref().and_then(|i| i.range.clone());
@@ -683,12 +753,7 @@ fn compute_init_url(
     if let Some(t) = tmpl {
         if let Some(init) = t.initialization.as_deref() {
             let expanded = expand_template(init, profile_id, bandwidth, 1, None);
-            let path = if !base_url_str.is_empty() {
-                format!("{base_url_str}{expanded}")
-            } else {
-                expanded
-            };
-            return (Some(resolve_url(mpd_url, &path)), None);
+            return (Some(resolve_url(base_url_str, &expanded)), None);
         }
     }
 
@@ -700,39 +765,24 @@ fn compute_init_url(
     if let Some(list) = seg_list {
         if let Some(init) = &list.initialization {
             if let Some(source_url) = init.source_url.as_deref() {
-                return (Some(resolve_url(mpd_url, source_url)), None);
+                return (Some(resolve_url(base_url_str, source_url)), None);
             }
             if let Some(range) = init.range.as_deref() {
-                let base = rep
-                    .base_url
-                    .as_ref()
-                    .and_then(|b| b.value.as_deref())
-                    .unwrap_or("");
-                return (Some(resolve_url(mpd_url, base)), Some(range.to_string()));
+                return (Some(base_url_str.to_string()), Some(range.to_string()));
             }
         }
     }
 
     // SegmentBase
     if let Some(sb) = &rep.segment_base {
-        let base = rep
-            .base_url
-            .as_ref()
-            .and_then(|b| b.value.as_deref())
-            .unwrap_or("");
-        let init_url = resolve_url(mpd_url, base);
+        let init_url = base_url_str.to_string();
         let init_range = sb.initialization.as_ref().and_then(|i| i.range.clone());
         return (Some(init_url), init_range);
     }
 
     // Fallback: BaseURL
-    let base = rep
-        .base_url
-        .as_ref()
-        .and_then(|b| b.value.as_deref())
-        .unwrap_or("");
-    if !base.is_empty() {
-        return (Some(resolve_url(mpd_url, base)), None);
+    if base_url_str != mpd_url {
+        return (Some(base_url_str.to_string()), None);
     }
 
     (None, None)
@@ -994,10 +1044,35 @@ pub fn build_hls_master(
         }
     }
 
+    // Subtitle tracks: expose DASH text/vtt AdaptationSets as HLS WebVTT subtitles.
+    {
+        const MAX_SUBTITLE_TRACKS: usize = 8;
+        let mut seen_subs: std::collections::HashSet<String> = std::collections::HashSet::new();
+        for (idx, profile) in subtitle_profiles.iter().take(MAX_SUBTITLE_TRACKS).enumerate() {
+            let lang = profile.lang.as_deref().unwrap_or("und");
+            let label = profile.label.as_deref().unwrap_or(lang);
+            let dedup_key = format!("{lang}:{label}");
+            if !seen_subs.insert(dedup_key) {
+                continue;
+            }
+            let default_attr = if idx == 0 { "YES" } else { "NO" };
+            let autoselect_attr = if idx == 0 { "YES" } else { "NO" };
+            let playlist_url = build_playlist_url(proxy_base, mpd_url, &profile.id, params);
+            hls.push(format!(
+                "#EXT-X-MEDIA:TYPE=SUBTITLES,GROUP-ID=\"subs\",NAME=\"{label}\",DEFAULT={default_attr},AUTOSELECT={autoselect_attr},LANGUAGE=\"{lang}\",URI=\"{playlist_url}\""
+            ));
+        }
+    }
+
     // Video tracks
     for profile in &video_profiles {
         let audio_attr = if !audio_profiles.is_empty() {
             ",AUDIO=\"audio\"".to_string()
+        } else {
+            String::new()
+        };
+        let subtitles_attr = if !subtitle_profiles.is_empty() {
+            ",SUBTITLES=\"subs\"".to_string()
         } else {
             String::new()
         };
@@ -1016,12 +1091,12 @@ pub fn build_hls_master(
 
         if params.remux_to_ts {
             hls.push(format!(
-                "#EXT-X-STREAM-INF:BANDWIDTH={},RESOLUTION={}x{},CODECS=\"{codecs}\"{audio_attr}",
+                "#EXT-X-STREAM-INF:BANDWIDTH={},RESOLUTION={}x{},CODECS=\"{codecs}\"{audio_attr}{subtitles_attr}",
                 profile.bandwidth, profile.width, profile.height
             ));
         } else {
             hls.push(format!(
-                "#EXT-X-STREAM-INF:BANDWIDTH={},RESOLUTION={}x{},CODECS=\"{codecs}\",FRAME-RATE={:.3}{audio_attr}",
+                "#EXT-X-STREAM-INF:BANDWIDTH={},RESOLUTION={}x{},CODECS=\"{codecs}\",FRAME-RATE={:.3}{audio_attr}{subtitles_attr}",
                 profile.bandwidth, profile.width, profile.height, profile.frame_rate
             ));
         }
@@ -1051,6 +1126,27 @@ pub fn build_hls_media_playlist(
     let segments = &profile.segments;
     if segments.is_empty() {
         warn!("No segments for profile {}", profile.id);
+        return hls.join("\n");
+    }
+
+    if profile.is_text() {
+        let target_duration = segments
+            .iter()
+            .map(|s| s.extinf)
+            .fold(0.0f64, f64::max)
+            .ceil() as u64;
+        hls.push(format!("#EXT-X-TARGETDURATION:{}", target_duration.max(1)));
+        hls.push("#EXT-X-MEDIA-SEQUENCE:1".to_string());
+        if !is_live {
+            hls.push("#EXT-X-PLAYLIST-TYPE:VOD".to_string());
+        }
+        for segment in segments {
+            hls.push(format!("#EXTINF:{:.3},", segment.extinf));
+            hls.push(build_stream_url(proxy_base, &segment.media, params));
+        }
+        if !is_live {
+            hls.push("#EXT-X-ENDLIST".to_string());
+        }
         return hls.join("\n");
     }
 
@@ -1187,6 +1283,22 @@ pub fn build_hls_media_playlist(
 // ---------------------------------------------------------------------------
 // URL builders
 // ---------------------------------------------------------------------------
+
+fn build_stream_url(proxy_base: &str, upstream_url: &str, params: &MpdProxyParams) -> String {
+    let mut url = format!(
+        "{proxy_base}/proxy/stream?d={}&api_password={}",
+        urlencoding::encode(upstream_url),
+        urlencoding::encode(&params.api_password)
+    );
+    for (k, v) in &params.pass_headers {
+        url.push_str(&format!(
+            "&h_{}={}",
+            urlencoding::encode(k),
+            urlencoding::encode(v)
+        ));
+    }
+    url
+}
 
 fn build_playlist_url(
     proxy_base: &str,

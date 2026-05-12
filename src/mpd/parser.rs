@@ -36,6 +36,10 @@ pub struct MpdDocument {
     #[serde(rename = "@publishTime", default)]
     pub publish_time: Option<String>,
 
+    /// Optional MPD-level BaseURL inherited by Period / AdaptationSet / Representation.
+    #[serde(rename = "BaseURL", default)]
+    pub base_url: Option<BaseUrl>,
+
     #[serde(rename = "Period", default)]
     pub periods: Vec<Period>,
 }
@@ -56,6 +60,10 @@ pub struct Period {
     /// ISO 8601 duration for the period duration.
     #[serde(rename = "@duration", default)]
     pub duration: Option<String>,
+
+    /// Optional Period-level BaseURL inherited by child AdaptationSets / Representations.
+    #[serde(rename = "BaseURL", default)]
+    pub base_url: Option<BaseUrl>,
 
     #[serde(rename = "AdaptationSet", default)]
     pub adaptation_sets: Vec<AdaptationSet>,
@@ -78,6 +86,9 @@ pub struct AdaptationSet {
 
     #[serde(rename = "@lang", default)]
     pub lang: Option<String>,
+
+    #[serde(rename = "@label", default)]
+    pub label: Option<String>,
 
     #[serde(rename = "@width", default)]
     pub width: Option<String>,
@@ -105,6 +116,10 @@ pub struct AdaptationSet {
 
     #[serde(rename = "SegmentList", default)]
     pub segment_list: Option<SegmentList>,
+
+    /// Optional AdaptationSet-level BaseURL inherited by child Representations.
+    #[serde(rename = "BaseURL", default)]
+    pub base_url: Option<BaseUrl>,
 
     #[serde(rename = "ContentProtection", default)]
     pub content_protection: Vec<ContentProtection>,
@@ -145,6 +160,9 @@ pub struct Representation {
 
     #[serde(rename = "@lang", default)]
     pub lang: Option<String>,
+
+    #[serde(rename = "@label", default)]
+    pub label: Option<String>,
 
     #[serde(rename = "@audioSamplingRate", default)]
     pub audio_sampling_rate: Option<String>,
