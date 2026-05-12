@@ -67,6 +67,11 @@ fn build_request_headers(proxy_data: &ProxyData) -> HeaderMap {
 /// against the current inherited base and writes the absolute result back into
 /// the XML. It also updates the current scope so descendant BaseURL and segment
 /// templates inherit correctly.
+
+fn xml_write<T>(result: std::io::Result<T>) -> AppResult<T> {
+    result.map_err(|e| serde_json::Error::io(e).into())
+}
+
 fn normalize_baseurls_to_absolute(mpd_xml: &[u8], mpd_url: &str) -> AppResult<Vec<u8>> {
     let mut reader = Reader::from_reader(Cursor::new(mpd_xml));
     reader.config_mut().trim_text(false);
@@ -105,10 +110,10 @@ fn normalize_baseurls_to_absolute(mpd_xml: &[u8], mpd_url: &str) -> AppResult<Ve
                     in_base_url = true;
                 }
 
-                writer.write_event(Event::Start(e.into_owned()))?;
+                xml_write(writer.write_event(Event::Start(e.into_owned())))?;
             }
             Ok(Event::Empty(e)) => {
-                writer.write_event(Event::Empty(e.into_owned()))?;
+                xml_write(writer.write_event(Event::Empty(e.into_owned())))?;
             }
             Ok(Event::Text(e)) => {
                 if in_base_url {
@@ -131,13 +136,13 @@ fn normalize_baseurls_to_absolute(mpd_xml: &[u8], mpd_url: &str) -> AppResult<Ve
                         *top = resolved.clone();
                     }
 
-                    writer.write_event(Event::Text(BytesText::new(&resolved)))?;
+                    xml_write(writer.write_event(Event::Text(BytesText::new(&resolved))))?;
                 } else {
-                    writer.write_event(Event::Text(e.into_owned()))?;
+                    xml_write(writer.write_event(Event::Text(e.into_owned())))?;
                 }
             }
             Ok(Event::CData(e)) => {
-                writer.write_event(Event::CData(e.into_owned()))?;
+                xml_write(writer.write_event(Event::CData(e.into_owned())))?;
             }
             Ok(Event::End(e)) => {
                 let name = String::from_utf8_lossy(e.name().as_ref()).to_string();
@@ -145,7 +150,7 @@ fn normalize_baseurls_to_absolute(mpd_xml: &[u8], mpd_url: &str) -> AppResult<Ve
                     in_base_url = false;
                 }
 
-                writer.write_event(Event::End(e.into_owned()))?;
+                xml_write(writer.write_event(Event::End(e.into_owned())))?;
 
                 if let Some(is_scope) = scope_stack.pop() {
                     if is_scope && base_stack.len() > 1 {
@@ -153,10 +158,10 @@ fn normalize_baseurls_to_absolute(mpd_xml: &[u8], mpd_url: &str) -> AppResult<Ve
                     }
                 }
             }
-            Ok(Event::Decl(e)) => writer.write_event(Event::Decl(e.into_owned()))?,
-            Ok(Event::PI(e)) => writer.write_event(Event::PI(e.into_owned()))?,
-            Ok(Event::Comment(e)) => writer.write_event(Event::Comment(e.into_owned()))?,
-            Ok(Event::DocType(e)) => writer.write_event(Event::DocType(e.into_owned()))?,
+            Ok(Event::Decl(e)) => xml_write(writer.write_event(Event::Decl(e.into_owned())))?,
+            Ok(Event::PI(e)) => xml_write(writer.write_event(Event::PI(e.into_owned())))?,
+            Ok(Event::Comment(e)) => xml_write(writer.write_event(Event::Comment(e.into_owned())))?,
+            Ok(Event::DocType(e)) => xml_write(writer.write_event(Event::DocType(e.into_owned())))?,
             Ok(Event::Eof) => break,
             Err(e) => {
                 return Err(AppError::Mpd(format!(

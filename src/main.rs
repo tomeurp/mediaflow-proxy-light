@@ -51,6 +51,7 @@ use auth::middleware::AuthMiddleware;
 use config::Config;
 use metrics::AppMetrics;
 use proxy::{handler, stream::StreamManager};
+use crate::mpd::dash_passthrough::mpd_dash_passthrough_handler;
 
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
@@ -247,6 +248,10 @@ async fn main() -> std::io::Result<()> {
                 web::scope("/proxy/mpd")
                     .route("/manifest", web::get().to(mpd_manifest_handler))
                     .route("/manifest", web::head().to(mpd_manifest_handler))
+                    .route("/dash.mpd", web::get().to(mpd_dash_passthrough_handler))
+                    .route("/dash.mpd", web::head().to(mpd_dash_passthrough_handler))
+                    .route("/manifest.dash.mpd", web::get().to(mpd_dash_passthrough_handler))
+                    .route("/manifest.dash.mpd", web::head().to(mpd_dash_passthrough_handler))
                     .route("/manifest.m3u8", web::get().to(mpd_manifest_handler))
                     .route("/manifest.m3u8", web::head().to(mpd_manifest_handler))
                     .route("/manifest.mpd", web::get().to(mpd_manifest_handler))

@@ -4,3 +4,4 @@ pub mod prebuffer;
 pub mod processor;
 pub mod segment;
 pub mod timeline;
+pub mod dash_passthrough;
