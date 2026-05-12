@@ -13,6 +13,7 @@
 //!   rewrite_baseurl=0     Do not normalize BaseURL elements. Default: enabled.
 //!   stripdrmmetadata=1    Remove PSSH/license-server metadata while preserving
 //!                         MP4Protection/default_KID info needed for CENC/ClearKey.
+//!   keepdefaultkid=1      Default/implicit. Kept for clarity; default_KID is never stripped.
 
 use std::collections::HashMap;
 use std::io::Cursor;
@@ -67,7 +68,6 @@ fn build_request_headers(proxy_data: &ProxyData) -> HeaderMap {
 /// against the current inherited base and writes the absolute result back into
 /// the XML. It also updates the current scope so descendant BaseURL and segment
 /// templates inherit correctly.
-
 fn xml_write<T>(result: std::io::Result<T>) -> AppResult<T> {
     result.map_err(|e| serde_json::Error::io(e).into())
 }
@@ -238,6 +238,10 @@ pub async fn mpd_dash_passthrough_handler(
     let rewrite_baseurl = bool_query(&query, "rewrite_baseurl", true);
     let strip_metadata = bool_query(&query, "stripdrmmetadata", false)
         || bool_query(&query, "strip_drm_metadata", false);
+    // default_KID is intentionally always preserved.  keepdefaultkid is accepted
+    // as a documentation/no-op toggle so callers can make that behavior explicit.
+    let _keep_default_kid = bool_query(&query, "keepdefaultkid", true)
+        || bool_query(&query, "keep_default_kid", true);
 
     let request_headers = build_request_headers(&proxy_data);
     let mut body = stream_manager
